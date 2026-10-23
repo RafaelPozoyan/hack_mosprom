@@ -73,7 +73,7 @@ export type Ticket = {
 
 export type Meta = {
   sites: { code: string; name: string; kind: string; tz: string }[]
-  staff: { id: number; name: string; role: string; max_connected: boolean; invite_link: string | null }[]
+  staff: { id: number; name: string; role: string; max_connected: boolean; invite_link: string | null; code: string | null }[]
   steps: { id: string; title: string; phase: string; at: Record<string, string | number | boolean> | null; sites: string[]; manual: boolean; audience: string; preview: string }[]
   surveys: Record<string, { title: string; questions: number }>
   max_connected: boolean
@@ -120,10 +120,13 @@ export type EmployeeCardData = {
   tickets: Ticket[]
   notifications: Notification[]
 }
-export type ManagerCardData = { employee: Employee; signals: string[]; upcoming: { title: string; run_at: string }[]; notifications: Notification[] }
+/** Сотрудник глазами руководителя: сервер отдаёт только эти поля (MANAGER_FIELDS в admin.py). */
+export type ManagerEmployee = Pick<Employee, 'id' | 'full_name' | 'first_name' | 'position' | 'site_code' | 'start_date' | 'probation_end' | 'status' | 'stage'>
+export type ManagerHome = { manager: string; employees: ManagerEmployee[] }
+export type ManagerCardData = { employee: ManagerEmployee; signals: string[]; upcoming: { title: string; run_at: string }[]; notifications: Notification[] }
 
 /** День испытательного срока: отрицательный — дней до выхода. */
-export function probationDay(e: Employee) {
+export function probationDay(e: Pick<Employee, 'start_date' | 'probation_end'>) {
   const day = Math.floor((Date.now() - new Date(e.start_date).getTime()) / 86400000) + 1
   const total = Math.round((new Date(e.probation_end).getTime() - new Date(e.start_date).getTime()) / 86400000) + 1
   return { day, total }

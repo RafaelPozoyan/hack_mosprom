@@ -5,7 +5,7 @@ import { useNavigate } from 'react-router'
 import { api, fmtDate, probationDay, withToken, type Employee, type Meta } from '../api'
 import { Avatar, Badge, Btn, Card, Empty, Field, Modal, Progress, inputCls, siteName } from '../components/ui'
 
-export function StageCell({ e }: { e: Employee }) {
+export function StageCell({ e }: { e: Pick<Employee, 'status' | 'start_date' | 'probation_end'> }) {
   const { day, total } = probationDay(e)
   if (e.status === 'invited') return <span className="text-sm text-ink/50">ждём запуска бота по QR</span>
   if (day < 1) return <span className="text-sm text-ink/60">выход через {1 - day} дн.</span>

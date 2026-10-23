@@ -46,6 +46,9 @@ async def on_start(s: AsyncSession, emp: Employee) -> None:
         await s.commit()
         await schedule_employee(s, emp)
         await run_step(s, emp, "welcome")
+    elif not await s.scalar(select(Message.id).where(Message.employee_id == emp.id, Message.step_id == "welcome").limit(1)):
+        # приветствие не ушло (сбой отправки в MAX): повторный старт начинает путь, а не показывает меню
+        await run_step(s, emp, "welcome")
     else:
         await send_menu(s, emp)
 
@@ -166,11 +169,18 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
     btn = find_button(payload, emp)
     if btn is None:
         return
+    _, step_id, idx, *_ = payload.split(":")
+    if step_id != "menu" and any(btn.get(k) for k in ("set_form", "flag", "goto", "action")):
+        # такие кнопки меняют путь новичка: двойной тап или нажатие в старом сообщении не должны срабатывать повторно
+        pressed = emp.state.get("pressed", [])
+        if f"{step_id}:{idx}" in pressed:
+            return
+        emp.state = {**emp.state, "pressed": [*pressed, f"{step_id}:{idx}"]}
+        await s.commit()
     if btn.get("set_form"):
         emp.address_form = btn["set_form"]
         await s.commit()
     if btn.get("flag"):
-        step_id = payload.split(":")[1]
         s.add(SurveyAnswer(employee_id=emp.id, survey_id=f"step:{step_id}", question_id=step_id,
                            value={"label": btn["text"], "flag": btn["flag"]}, flagged=True))
         await s.commit()

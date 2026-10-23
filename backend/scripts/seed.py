@@ -19,7 +19,7 @@ from sqlalchemy import select, text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.bot import dialog
-from app.bot.scenario import add_months, schedule_employee, step, step_run_at
+from app.bot.scenario import add_months, next_workday, schedule_employee, step, step_run_at
 from app.channels import InEvent
 from app.config import settings
 from app.db import init_db, session
@@ -169,7 +169,7 @@ async def main(dirs: list[Path]) -> None:
         await s.commit()
         ids = []
         for full, pos, site, days, form, _ in PEOPLE:
-            start = date.today() - timedelta(days=days)
+            start = next_workday(date.today() - timedelta(days=days))  # выходят на работу в рабочий день
             e = Employee(
                 full_name=full, first_name=full.split()[1], position=pos, site_code=site, start_date=start,
                 probation_end=add_months(start, settings().probation_months), manager_id=staff["manager"].id,

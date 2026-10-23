@@ -1,29 +1,30 @@
 import { useQuery } from '@tanstack/react-query'
 import { BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
-import { Link, useParams } from 'react-router'
-import { api, fmtDateTime, type Employee, type ManagerCardData, type Meta } from '../api'
+import { Link, Route, Routes, useParams } from 'react-router'
+import { api, fmtDateTime, type ManagerCardData, type ManagerHome, type Meta } from '../api'
 import { Avatar, Card, Empty, siteName, timeAgo } from '../components/ui'
 import { StageCell } from './Employees'
 
-// Руководитель видит прогресс и рекомендации по своим новичкам. Свободные ответы и сигналы,
-// касающиеся самого руководителя, сюда не попадают — их видит только HR (политика в сценарии).
+// Руководитель видит прогресс и рекомендации по своим новичкам. Фильтрует сервер (/api/m/<код>): свободные ответы
+// и сигналы, касающиеся самого руководителя, в ответ не попадают — их видит только HR (политика в сценарии).
 
-export default function ManagerView() {
-  const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
-  const { data: emps = [] } = useQuery({ queryKey: ['employees'], queryFn: () => api.get<Employee[]>('/api/employees') })
-  const manager = meta?.staff.find((s) => s.role === 'manager')
-  const mine = emps.filter((e) => manager && e.manager_id === manager.id)
+const BROKEN_LINK = 'Ссылка не работает. Попросите HR-менеджера прислать новую.'
+
+export function ManagerView({ code, base }: { code: string; base: string }) {
+  const { data, isError } = useQuery({ queryKey: ['manager', code], queryFn: () => api.get<ManagerHome>(`/api/m/${code}`) })
+  if (isError) return <Card className="mx-auto w-full max-w-4xl"><Empty>{BROKEN_LINK}</Empty></Card>
+  if (!data) return null
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Мои новички</h1>
-        {manager && <p className="mt-1 text-sm text-ink/50">{manager.name}</p>}
+        <p className="mt-1 text-sm text-ink/50">{data.manager}</p>
       </div>
-      {mine.length === 0 ? (
+      {data.employees.length === 0 ? (
         <Card><Empty>Новых сотрудников в вашей команде пока нет</Empty></Card>
       ) : (
-        mine.map((e) => (
-          <Link key={e.id} to={`/my/${e.id}`}>
+        data.employees.map((e) => (
+          <Link key={e.id} to={`${base}/${e.id}`}>
             <Card className="transition hover:shadow-md">
               <div className="flex flex-wrap items-center gap-4">
                 <Avatar name={e.full_name} size={44} />
@@ -44,9 +45,10 @@ export default function ManagerView() {
   )
 }
 
-export function ManagerCard() {
+export function ManagerCard({ code }: { code: string }) {
   const { id } = useParams()
-  const { data } = useQuery({ queryKey: ['manager-card', id], queryFn: () => api.get<ManagerCardData>(`/api/manager/employees/${id}`) })
+  const { data, isError } = useQuery({ queryKey: ['manager-card', code, id], queryFn: () => api.get<ManagerCardData>(`/api/m/${code}/employees/${id}`) })
+  if (isError) return <Card className="mx-auto w-full max-w-4xl"><Empty>{BROKEN_LINK}</Empty></Card>
   if (!data) return null
   const e = data.employee
   return (
@@ -97,6 +99,40 @@ export function ManagerCard() {
           )}
         </Card>
       </div>
+    </div>
+  )
+}
+
+/** Роль «Руководитель» в панели HR: тот же экран и тот же ответ сервера, что по личной ссылке руководителя. */
+export default function ManagerPreview({ card = false }: { card?: boolean }) {
+  const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
+  const code = meta?.staff.find((s) => s.role === 'manager')?.code
+  if (!meta) return null
+  if (!code) return <Card><Empty>Добавьте руководителя — здесь появится его экран</Empty></Card>
+  const link = `${location.origin}/m/${code}`
+  return (
+    <>
+      {card ? <ManagerCard code={code} /> : <ManagerView code={code} base="/my" />}
+      <p className="mx-auto mt-5 max-w-4xl text-xs text-ink/45">
+        Руководитель открывает этот экран по личной ссылке: <a href={link} target="_blank" rel="noreferrer" className="underline">{link}</a>
+      </p>
+    </>
+  )
+}
+
+/** Личная ссылка руководителя /m/<код>: только его новички, без панели HR. */
+export function ManagerLink() {
+  const { code = '' } = useParams()
+  return (
+    <div className="min-h-screen px-5 py-7">
+      <div className="mx-auto mb-6 flex max-w-4xl items-center gap-2.5">
+        <div className="grid size-9 place-items-center rounded-2xl bg-lime text-lg">🐾</div>
+        <div className="text-[15px] font-semibold">Корсик</div>
+      </div>
+      <Routes>
+        <Route index element={<ManagerView code={code} base={`/m/${code}`} />} />
+        <Route path=":id" element={<ManagerCard code={code} />} />
+      </Routes>
     </div>
   )
 }

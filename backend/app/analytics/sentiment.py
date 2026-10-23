@@ -66,14 +66,12 @@ async def last_bot_text(s: AsyncSession, emp: Employee) -> str:
     return m.text[:500] if m else ""
 
 
-async def analyze_and_react(
-    s: AsyncSession, emp: Employee, text: str, source: str, extra_flags: list[str] | None = None
+async def save_and_react(
+    s: AsyncSession, emp: Employee, res: TextAnalysis | None, text: str, source: str, extra_flags: list[str] | None = None
 ) -> Analysis | None:
-    """extra_flags — явный сигнал из выбранного варианта ответа (например, «Нет, задумываюсь об уходе»)."""
-    try:
-        res = await analyze_text(text, context=await last_bot_text(s, emp))
-    except Exception:
-        log.exception("sentiment analysis failed")
+    """res — разбор LLM (None, если он не удался); extra_flags — явный сигнал из выбранного варианта ответа
+    (например, «Нет, задумываюсь об уходе»): он срабатывает и без LLM."""
+    if res is None:
         if extra_flags:
             await react(s, emp, extra_flags, "medium", text)
         return None
@@ -93,6 +91,13 @@ async def analyze_and_react(
     await s.commit()
     await react(s, emp, res.risk_flags, res.severity, text, offer_employee=source == "chat")
     return a
+
+
+def manager_topics(flag_sets: list[list[str]], tx: dict) -> list[str]:
+    """Что можно показать руководителю: только сигналы из manager_actionable, и ничего из записи,
+    где есть сигнал never_to_manager (например, конфликт с руководителем), — даже соседние темы этой записи."""
+    never, allowed = set(tx["never_to_manager"]), set(tx["manager_actionable"])
+    return sorted({f for flags in flag_sets if not never & set(flags) for f in flags if f in allowed})
 
 
 async def react(
@@ -120,8 +125,8 @@ async def react(
                     buttons=[[Button("📨 Да, передай HR", payload="a:relay")], [Button("Не сейчас", payload="a:noop")]],
                 ),
             )
-    manager_flags = [f for f in flags if f in tx["manager_actionable"] and f not in tx["never_to_manager"]]
-    if manager_flags and not any(f in tx["never_to_manager"] for f in flags):
+    manager_flags = manager_topics([flags], tx)
+    if manager_flags:
         await notify_audience(
             s,
             emp,
@@ -133,16 +138,24 @@ async def react(
 
 def analyze_later(emp_id: int, text: str, source: str, extra_flags: list[str] | None = None, question_id: int | None = None) -> None:
     """Анализ в фоне: сотрудник не ждёт LLM, следующий вопрос опроса или ответ приходит сразу.
-    Реакция выполняется под замком сотрудника, чтобы не гоняться с обработкой его сообщений за состояние диалога."""
+    Сам разбор LLM идёт без замка сотрудника: на CPU это десятки секунд, и кнопки сотрудника всё это время ждали бы.
+    Запись и реакция — под замком, чтобы не гоняться с обработкой его сообщений за состояние диалога."""
 
     async def job():
         from app.bot.updates import _locks
         from app.db import session
         from app.models import Question
 
+        async with session() as s:
+            context = await last_bot_text(s, await s.get(Employee, emp_id))
+        try:
+            res = await analyze_text(text, context=context)
+        except Exception:
+            log.exception("sentiment analysis failed")
+            res = None
         async with _locks[emp_id], session() as s:
             emp = await s.get(Employee, emp_id)
-            a = await analyze_and_react(s, emp, text, source, extra_flags)
+            a = await save_and_react(s, emp, res, text, source, extra_flags)
             if a and question_id:
                 q = await s.get(Question, question_id)
                 q.topic = a.topics[0]

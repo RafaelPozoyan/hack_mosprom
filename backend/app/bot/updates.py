@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+import re
 from collections import defaultdict
 
 from sqlalchemy import select
 
+from app import channels
 from app.bot import dialog, escalation
 from app.channels import InEvent, OutMessage
 from app.channels.max import max_client
@@ -22,6 +24,11 @@ UNKNOWN_USER = (
     "Привет! Я Корсик 🐾 — ИИ-гид по адаптации новых сотрудников Группы ПОЛИПЛАСТИК.\n"
     "Чтобы начать, откройте меня по QR-коду или ссылке из приглашения рекрутера."
 )
+CODE_TAKEN = (
+    "Этот код приглашения уже привязан к другому аккаунту MAX, или ваш аккаунт уже связан с другим приглашением.\n"
+    "Напишите, пожалуйста, своему HR-менеджеру — он поможет."
+)
+TICKET_REF = re.compile(r"#(\d+)")
 
 
 async def handle_employee_event(employee_id: int, ev: InEvent) -> None:
@@ -94,6 +101,10 @@ async def _on_started(user: dict, payload: str) -> None:
     async with session() as s:
         if payload.startswith("staff_"):
             staff = await s.scalar(select(Staff).where(Staff.invite_code == payload[6:]))
+            if staff and staff.max_user_id not in (None, user_id):
+                # иначе по чужой ссылке staff_<код> можно подписаться на дайджесты и эскалации другого сотрудника HR
+                await max_client().send(OutMessage(text=CODE_TAKEN), user_id=user_id)
+                return
             if staff:
                 staff.max_user_id = user_id
                 await s.commit()
@@ -103,6 +114,12 @@ async def _on_started(user: dict, payload: str) -> None:
                 )
                 return
         emp = await s.scalar(select(Employee).where(Employee.invite_code == payload)) if payload else None
+        # код из QR привязывается к одному аккаунту: чужой скан (QR на экране демо) не уводит путь новичка
+        # на другой телефон, а один аккаунт не становится двумя сотрудниками
+        other = emp and await s.scalar(select(Employee.id).where(Employee.max_user_id == user_id, Employee.id != emp.id))
+        if emp and (emp.max_user_id not in (None, user_id) or other):
+            await max_client().send(OutMessage(text=CODE_TAKEN), user_id=user_id)
+            return
         if emp:
             emp.channel, emp.max_user_id = "max", user_id
             await s.commit()
@@ -116,14 +133,19 @@ async def _on_started(user: dict, payload: str) -> None:
 
 
 async def _on_hr_chat(msg: dict, text: str) -> None:
-    """Ответ HR реплаем на карточку эскалации в групповом чате → сообщение сотруднику."""
+    """Ответ HR реплаем на карточку эскалации или на пересланное уточнение сотрудника → сообщение сотруднику."""
     link = msg.get("link") or {}
     if link.get("type") != "reply" or not text:
         return
-    mid = (link.get("message") or {}).get("mid")
+    linked, from_bot = link.get("message") or {}, (link.get("sender") or {}).get("is_bot")
     async with session() as s:
-        t = await s.scalar(select(Ticket).where(Ticket.hr_chat_mid == mid))
+        t = await s.scalar(select(Ticket).where(Ticket.hr_chat_mid == linked.get("mid")))
+        if not t and from_bot and (m := TICKET_REF.search(linked.get("text") or "")):
+            # реплай на уточнение сотрудника («✉️ #12 · …»), а не на карточку: номер обращения есть в тексте
+            t = await s.get(Ticket, int(m.group(1)))
         if not t:
+            if from_bot:
+                await channels.post_hr_chat(OutMessage(text="Не нашёл обращение для этого ответа. Ответьте, пожалуйста, реплаем на карточку обращения."))
             return
         author = (msg.get("sender") or {}).get("first_name") or (msg.get("sender") or {}).get("name") or "HR"
         if text.lower() in ("/close", "/закрыть"):

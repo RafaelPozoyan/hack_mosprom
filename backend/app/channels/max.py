@@ -65,7 +65,11 @@ class MaxClient:
         r = await self.http.request(method, path, **kw)
         if r.status_code >= 400:
             raise MaxApiError(r.status_code, r.text)
-        return r.json() if r.content else {}
+        body = r.json() if r.content else {}
+        # подписка, правка сообщения и ответ на нажатие сообщают о неудаче в теле ответа с кодом 200
+        if isinstance(body, dict) and body.get("success") is False:
+            raise MaxApiError(r.status_code, body.get("message", r.text))
+        return body
 
     async def _paced(self, key: str):
         lock = self._chat_locks.setdefault(key, asyncio.Lock())

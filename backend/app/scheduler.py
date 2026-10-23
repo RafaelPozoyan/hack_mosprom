@@ -39,6 +39,8 @@ async def run_job(job_id: int) -> None:
 
     async with session() as s:
         job = await s.get(Job, job_id)
+        if job is None:
+            return  # сотрудника удалили вместе с его задачами, пока задача ждала в пачке
         if job.employee_id:
             # шаг таймлайна и ответы сотрудника не должны менять его состояние одновременно
             async with _locks[job.employee_id]:
@@ -70,6 +72,8 @@ async def _execute(s, job: Job) -> None:
         job.error = repr(e)[:1000]
         job.status = "failed" if job.attempts >= MAX_ATTEMPTS else "pending"
         job.run_at = utcnow() + timedelta(minutes=job.attempts)
+        if job.kind == "digest" and job.status == "failed":
+            await ensure_digest_job(s, after=utcnow())  # иначе дайджесты остановятся до перезапуска процесса
     await s.commit()
 
 
@@ -78,7 +82,11 @@ async def tick() -> int:
         ids = list(await s.scalars(CLAIM_SQL, {"n": CLAIM_BATCH}))
         await s.commit()
     for job_id in ids:
-        await run_job(job_id)
+        try:
+            await run_job(job_id)
+        except Exception:
+            # сбой одной задачи не должен оставить остальные захваченные задачи в running до перезапуска
+            log.exception("job %s crashed", job_id)
     return len(ids)
 
 

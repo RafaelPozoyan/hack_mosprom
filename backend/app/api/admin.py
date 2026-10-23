@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics import digest, metrics
+from app.analytics.sentiment import manager_topics
 from app.bot import escalation
 from app.bot.scenario import (
     add_months,
@@ -91,7 +92,9 @@ async def meta(s: AsyncSession = Depends(get_session)):
 
 def staff_view(x: Staff) -> dict:
     return {"id": x.id, "name": x.name, "role": x.role, "site_code": x.site_code, "max_connected": bool(x.max_user_id),
-            "max_link": x.max_link, "invite_link": deep_link(f"staff_{x.invite_code}")}
+            "max_link": x.max_link, "invite_link": deep_link(f"staff_{x.invite_code}"),
+            # личная ссылка руководителя на его экран (/m/<код>); код видит только HR — /api/meta закрыт токеном панели
+            "code": x.invite_code if x.role == "manager" else None}
 
 
 def deep_link(payload: str) -> str | None:
@@ -262,16 +265,51 @@ def answers_view(e: Employee, answers: list[SurveyAnswer]) -> list[dict]:
     return list(groups.values())
 
 
-@router.get("/manager/employees/{emp_id}")
-async def manager_card(emp_id: int, s: AsyncSession = Depends(get_session)):
-    """Карточка для руководителя: прогресс и рекомендации без свободных ответов и без сигналов о самом руководителе."""
-    e = await _emp(s, emp_id)
-    policy = scenario()["analytics"]
-    allowed = set(policy["manager_actionable"]) - set(policy["never_to_manager"])
+# --- экран руководителя -------------------------------------------------------------------------------
+# Отдельный роутер без токена HR: руководитель открывает личную ссылку /m/<код>. Сервер отдаёт только его
+# сотрудников и только поля из MANAGER_FIELDS — свободные ответы, опросы, обращения и коды приглашений сюда не попадают.
+# Роль «Руководитель» в панели HR показывает этот же ответ сервера.
+
+manager_router = APIRouter(prefix="/api/m")
+MANAGER_FIELDS = ("id", "full_name", "first_name", "position", "department", "site_code", "start_date", "probation_end",
+                  "status", "stage")
+
+
+def manager_view(e: Employee) -> dict:
+    v = employee_view(e)
+    return {k: v[k] for k in MANAGER_FIELDS}
+
+
+async def _manager(s: AsyncSession, code: str) -> Staff:
+    m = await s.scalar(select(Staff).where(Staff.invite_code == code, Staff.role == "manager"))
+    if not m:
+        raise HTTPException(404, "ссылка недействительна")
+    return m
+
+
+@manager_router.get("/{code}")
+async def manager_home(code: str, s: AsyncSession = Depends(get_session)):
+    m = await _manager(s, code)
+    emps = (await s.scalars(select(Employee).where(Employee.manager_id == m.id).order_by(Employee.start_date.desc()))).all()
+    return {"manager": m.name, "employees": [manager_view(e) for e in emps]}
+
+
+@manager_router.get("/{code}/employees/{emp_id}")
+async def manager_card(code: str, emp_id: int, s: AsyncSession = Depends(get_session)):
+    """Прогресс и рекомендации по своему новичку — по той же политике, что push руководителю."""
+    m = await _manager(s, code)
+    e = await s.get(Employee, emp_id)
+    if not e or e.manager_id != m.id:
+        raise HTTPException(404, "сотрудник не найден")
     from datetime import UTC, datetime, timedelta
 
-    signals = await metrics.risk_signals(s, datetime.now(UTC) - timedelta(days=90))
-    mine = sorted({x["flag"] for x in signals.get(emp_id, []) if x["flag"] in allowed})
+    since = datetime.now(UTC) - timedelta(days=90)
+    flagged = (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.employee_id == emp_id, SurveyAnswer.flagged,
+                                                          SurveyAnswer.created_at >= since))).all()
+    analyses = (await s.scalars(select(Analysis).where(Analysis.employee_id == emp_id, Analysis.created_at >= since,
+                                                       Analysis.severity != "low"))).all()
+    topics = manager_topics([[a.value.get("flag")] for a in flagged] + [a.risk_flags or [] for a in analyses],
+                            scenario()["analytics"])
     upcoming = [
         {"title": st.get("title", st["id"]), "run_at": run_at.isoformat()}
         for st, run_at in timeline(e)
@@ -279,10 +317,10 @@ async def manager_card(emp_id: int, s: AsyncSession = Depends(get_session)):
     ][:4]
     notes = (await s.scalars(select(Message).where(Message.employee_id == emp_id, Message.author == "to_manager").order_by(Message.id.desc()))).all()
     return {
-        "employee": employee_view(e),
-        "signals": mine,
+        "employee": manager_view(e),
+        "signals": topics,
         "upcoming": upcoming,
-        "notifications": [{"text": m.text, "delivered": m.payload.get("delivered"), "at": m.created_at.isoformat()} for m in notes],
+        "notifications": [{"text": n.text, "delivered": n.payload.get("delivered"), "at": n.created_at.isoformat()} for n in notes],
     }
 
 

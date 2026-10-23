@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels, llm
+from app.analytics.metrics import stage
 from app.channels import OutMessage
 from app.models import Analysis, Digest, Employee, Question, Staff, SurveyAnswer, Ticket
 
@@ -26,7 +27,8 @@ async def collect(s: AsyncSession, start: date, end: date) -> dict:
     answers = (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.created_at >= t0, SurveyAnswer.created_at < t1))).all()
     questions = (await s.scalars(select(Question).where(Question.created_at >= t0, Question.created_at < t1))).all()
     tickets = (await s.scalars(select(Ticket).where(Ticket.created_at >= t0, Ticket.created_at < t1))).all()
-    active = (await s.scalars(select(Employee).where(Employee.status == "active"))).all()
+    # «в адаптации» — запустили бота и ещё на испытательном сроке, как в дашборде (stage)
+    active = [e for e in (await s.scalars(select(Employee).where(Employee.status == "active"))).all() if stage(e) != "завершили"]
 
     sentiment = Counter(a.sentiment for a in analyses)
     clusters: dict[str, dict] = {}

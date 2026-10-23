@@ -10,7 +10,7 @@ import DigestPage from './pages/Digest'
 import EmployeeCard from './pages/EmployeeCard'
 import Employees from './pages/Employees'
 import Knowledge from './pages/Knowledge'
-import ManagerView, { ManagerCard } from './pages/Manager'
+import ManagerPreview, { ManagerLink } from './pages/Manager'
 import Scenario from './pages/Scenario'
 import Tickets from './pages/Tickets'
 
@@ -39,6 +39,15 @@ const saved = <T,>(key: string, fallback: T): T => {
 }
 
 export default function App() {
+  return (
+    <Routes>
+      <Route path="/m/:code/*" element={<ManagerLink />} />
+      <Route path="*" element={<Panel />} />
+    </Routes>
+  )
+}
+
+function Panel() {
   const [role, setRole] = useState<Role>(() => saved('korsik_role', 'hr'))
   const [demo, setDemo] = useState<boolean>(() => saved('korsik_demo', true))
   const { data: open = [] } = useQuery({ queryKey: ['tickets', 'open'], queryFn: () => api.get<Ticket[]>('/api/tickets?status=open'), refetchInterval: 10_000 })
@@ -114,9 +123,9 @@ export default function App() {
           <Routes>
             <Route path="/" element={role === 'manager' ? <Navigate to="/my" /> : <Dashboard />} />
             <Route path="/employees" element={<Employees />} />
-            <Route path="/employees/:id" element={role === 'manager' ? <ManagerCard /> : <EmployeeCard />} />
-            <Route path="/my" element={<ManagerView />} />
-            <Route path="/my/:id" element={<ManagerCard />} />
+            <Route path="/employees/:id" element={role === 'manager' ? <ManagerPreview card /> : <EmployeeCard />} />
+            <Route path="/my" element={<ManagerPreview />} />
+            <Route path="/my/:id" element={<ManagerPreview card />} />
             <Route path="/tickets" element={<Tickets />} />
             <Route path="/kb" element={<Knowledge />} />
             <Route path="/mood" element={<DigestPage />} />

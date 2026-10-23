@@ -1,5 +1,6 @@
 """Тесты детерминированной логики: то, на чём держится доверие к боту, не должно зависеть от LLM."""
 
+import asyncio
 from datetime import date
 from types import SimpleNamespace
 
@@ -113,3 +114,85 @@ def test_timeline_dates_follow_working_days():
 def test_russian_holidays_are_skipped():
     e = emp(start_date=date(2026, 11, 3))  # 4 ноября — День народного единства
     assert step_date({"workday": 2}, e) == date(2026, 11, 5)
+
+
+# --- раздача панели ----------------------------------------------------------------------------------
+
+
+def test_spa_never_serves_files_outside_build(tmp_path):
+    from app.main import spa_file
+
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("app")
+    (dist / "assets" / "app.js").write_text("js")
+    (tmp_path / ".env").write_text("MAX_TOKEN=secret")
+    assert spa_file(dist, "assets/app.js") == (dist / "assets" / "app.js").resolve()
+    assert spa_file(dist, "employees/1") == dist / "index.html"
+    assert spa_file(dist, "../.env") == dist / "index.html"
+    assert spa_file(dist, "") == dist / "index.html"
+
+
+# --- повторные нажатия ---------------------------------------------------------------------------------
+
+
+class FakeSession:
+    def __init__(self):
+        self.added = []
+
+    async def commit(self):
+        pass
+
+    def add(self, x):
+        self.added.append(x)
+
+
+def test_path_changing_button_fires_once(monkeypatch):
+    # двойной тап по «Нет» под вопросом о доступах: один ответ и один push руководителю, а не два
+    from app.analytics import sentiment
+    from app.bot import dialog
+    from app.models import SurveyAnswer
+
+    reacts = []
+
+    async def fake_send(s, emp, msg, **kw):
+        pass
+
+    async def fake_react(s, emp, flags, severity, text, offer_employee=False):
+        reacts.append(flags)
+
+    monkeypatch.setattr(dialog, "find_button", lambda payload, emp: {"text": "Нет", "flag": "нет доступов"})
+    monkeypatch.setattr(dialog.channels, "send", fake_send)
+    monkeypatch.setattr(sentiment, "react", fake_react)
+    s, e = FakeSession(), emp(id=1, state={})
+    for _ in range(2):
+        asyncio.run(dialog.scenario_button(s, e, "b:d1_access:0:0:1"))
+    assert sum(isinstance(x, SurveyAnswer) for x in s.added) == 1
+    assert reacts == [["нет доступов"]]
+
+
+def test_stale_skip_does_not_advance_survey(monkeypatch):
+    from app.bot import surveys
+
+    advanced = []
+
+    async def fake_advance(s, emp):
+        advanced.append(True)
+
+    monkeypatch.setattr(surveys, "advance", fake_advance)
+    e = emp(state={"survey": {"id": "day3", "q": 1, "selected": []}})
+    asyncio.run(surveys.comment(FakeSession(), e, None))
+    assert advanced == []
+
+
+# --- приватность руководителя ---------------------------------------------------------------------------
+
+
+def test_manager_never_sees_topics_from_a_record_about_himself():
+    from app.analytics.sentiment import manager_topics
+
+    tx = {"manager_actionable": ["недостаток информации", "нет доступов"],
+          "never_to_manager": ["конфликт с наставником или руководителем"]}
+    # в первой записи соседствуют «недостаток информации» и жалоба на руководителя — запись не показывается целиком
+    flags = [["недостаток информации", "конфликт с наставником или руководителем"], ["нет доступов"]]
+    assert manager_topics(flags, tx) == ["нет доступов"]

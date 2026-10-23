@@ -24,6 +24,13 @@ log = logging.getLogger("korsik")
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
 
+def spa_file(root: Path, path: str) -> Path:
+    """Файл сборки панели; всё остальное — index.html (маршруты SPA).
+    Путь проверяется после resolve: иначе запрос вида /%2e%2e/%2e%2e/.env читает любой файл сервера."""
+    f = (root / path).resolve()
+    return f if path and f.is_file() and f.is_relative_to(root.resolve()) else root / "index.html"
+
+
 async def seed_sites() -> None:
     async with session() as s:
         for code, site in scenario()["sites"].items():
@@ -57,6 +64,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Корсик — ИИ-ассистент адаптации", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(admin.router)
+app.include_router(admin.manager_router)
 app.include_router(demo.router)
 app.mount("/media", StaticFiles(directory=settings().media_dir), name="media")
 
@@ -81,5 +89,6 @@ if WEB_DIST.exists():
 
     @app.get("/{path:path}")
     async def spa(path: str):
-        f = WEB_DIST / path
-        return FileResponse(f if path and f.is_file() else WEB_DIST / "index.html")
+        if path.startswith("api/"):
+            raise HTTPException(404)  # неизвестный адрес API — 404, а не страница панели
+        return FileResponse(spa_file(WEB_DIST, path))

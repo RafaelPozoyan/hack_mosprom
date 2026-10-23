@@ -251,6 +251,11 @@ async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
     audience = st.get("audience", "employee")
     if audience == "employee" and emp.status == "invited":
         return  # бот MAX не может написать первым: пока новичок не открыл бота по QR, шаги для него пропускаем
+    pressed = emp.state.get("pressed", [])
+    if any(k.startswith(f"{step_id}:") for k in pressed):
+        # шаг отправлен заново (HR запустил вручную) — его кнопки снова активны
+        emp.state = {**emp.state, "pressed": [k for k in pressed if not k.startswith(f"{step_id}:")]}
+        await s.commit()
     for idx, m in enumerate(st.get("messages", [])):
         if audience != "employee":
             await notify_audience(s, emp, audience, render(m["text"], emp), step_id)

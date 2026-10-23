@@ -66,7 +66,9 @@ def question_message(emp: Employee, survey_id: str, q: dict, selected: list[str]
 
 
 async def start(s: AsyncSession, emp: Employee, survey_id: str) -> None:
-    emp.state = {**emp.state, "survey": {"id": survey_id, "q": 0, "selected": []}}
+    # недописанный комментарий к прошлому опросу не должен перехватывать ответы нового
+    state = {k: v for k, v in emp.state.items() if not (k == "await" and v.get("kind") in ("survey_comment", "survey_text"))}
+    emp.state = {**state, "survey": {"id": survey_id, "q": 0, "selected": []}}
     await s.commit()
     await _ask(s, emp)
     now = datetime.now(ZoneInfo("UTC"))
@@ -117,6 +119,9 @@ async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: 
     if not q:
         await channels.send(s, emp, OutMessage(text="Этот вопрос уже позади — спасибо! 🙂"))
         return
+    aw = emp.state.get("await") or {}
+    if aw.get("kind") == "survey_comment" and aw.get("qid") == qid:
+        return  # ответ на этот вопрос уже записан, ждём комментарий — повторный тап не создаёт второй ответ
     kind = q["type"]
     reply, ask, offer, flag = None, None, [], None
     if kind == "choice":
@@ -151,7 +156,7 @@ async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: 
         await react(s, emp, [flag], "medium", f"{render(q['text'], emp)} → {value.get('label') or value}")
 
     if ask:
-        emp.state = {**emp.state, "await": {"kind": "survey_comment", "answer_id": ans.id, "offer": offer}}
+        emp.state = {**emp.state, "await": {"kind": "survey_comment", "answer_id": ans.id, "qid": qid, "offer": offer}}
         await s.commit()
         await channels.send(s, emp, OutMessage(text=render(ask, emp), buttons=[[Button(SKIP, payload="a:skip_comment")]]))
         return
@@ -163,6 +168,8 @@ async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: 
 async def comment(s: AsyncSession, emp: Employee, text: str | None) -> None:
     """Свободный ответ: комментарий к оценке, «свой вариант» или открытый вопрос опроса."""
     aw = emp.state.get("await") or {}
+    if aw.get("kind") not in ("survey_comment", "survey_text"):
+        return  # «Пропустить» из старого сообщения: комментарий уже не ждём, иначе опрос перескочил бы вопрос
     emp.state = {k: v for k, v in emp.state.items() if k != "await"}
     await s.commit()
     if aw.get("kind") == "survey_text":

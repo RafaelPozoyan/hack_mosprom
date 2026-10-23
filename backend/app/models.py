@@ -38,7 +38,7 @@ class Staff(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     role: Mapped[str] = mapped_column(String(20))  # hr | recruiter | manager | head
-    max_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    max_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     max_link: Mapped[str | None] = mapped_column(String(500))  # ссылка «перейти в диалог» для кнопки
     site_code: Mapped[str | None] = mapped_column(ForeignKey("sites.code"))
     invite_code: Mapped[str] = mapped_column(String(64), unique=True)  # диплинк staff_<code> → подписка на push
@@ -58,7 +58,7 @@ class Employee(Base):
     recruiter_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     address_form: Mapped[str | None] = mapped_column(String(2))  # ty | vy — выбирает сам сотрудник
     channel: Mapped[str] = mapped_column(String(10), default="web")  # web (демо) | max
-    max_user_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    max_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)  # один аккаунт MAX — один сотрудник
     invite_code: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="invited")  # invited | active | finished
     state: Mapped[dict] = mapped_column(JSONB, default=dict)  # текущий опрос/ожидание ввода
