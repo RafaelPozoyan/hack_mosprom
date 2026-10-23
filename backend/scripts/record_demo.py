@@ -15,13 +15,16 @@ BASE, EMP_ID, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 WAIT_AI_MS = 180_000
 
 
+BOT = '[data-author="bot"]'  # пузыри сообщений бота; индикатор «печатает…» сюда не входит
+
+
 def bot_messages(page: Page) -> int:
-    return page.locator("div.rounded-bl-md").count()
+    return page.locator(BOT).count()
 
 
 def wait_bot(page: Page, before: int, n: int = 1) -> None:
     page.wait_for_function(
-        "([b, n]) => document.querySelectorAll('div.rounded-bl-md').length >= b + n", arg=[before, n], timeout=WAIT_AI_MS
+        "([s, b, n]) => document.querySelectorAll(s).length >= b + n", arg=[BOT, before, n], timeout=WAIT_AI_MS
     )
     page.wait_for_timeout(1500)
 

@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { FastForward, FileText, QrCode, Send } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
-import { api, type ChatMessage, type Employee } from '../api'
+import { api, fmtTime, type ChatMessage, type Employee } from '../api'
 
 const URL_RE = /(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s)]+|\*\*[^*]+\*\*)/g
 
@@ -30,6 +30,7 @@ function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, t
     <div className={clsx('my-1.5 flex', mine ? 'justify-end' : 'justify-start')}>
       <div className={clsx('max-w-[85%]')}>
         <div
+          data-author={m.author}
           className={clsx(
             'rounded-2xl px-3 py-2 text-[13.5px] leading-snug whitespace-pre-wrap shadow-sm',
             mine ? 'rounded-br-md bg-[#d9f2a6] text-ink' : m.author === 'hr' ? 'rounded-bl-md bg-sky-100 text-ink' : 'rounded-bl-md bg-white text-ink',
@@ -79,7 +80,7 @@ function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, t
           </div>
         )}
         <div className={clsx('mt-0.5 text-[10px] text-ink/40', mine ? 'text-right' : 'text-left')}>
-          {new Date(m.created_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
+          {fmtTime(m.created_at)}
         </div>
       </div>
     </div>
@@ -136,7 +137,7 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
   const next = async () => {
     busy()
     const r = await api.post<{ ok: boolean; step: string | null; run_at?: string }>(`${base}/next`)
-    setNextInfo(r.ok ? `отправлено то, что по плану было ${new Date(r.run_at!).toLocaleDateString('ru-RU')}` : 'запланированных шагов больше нет')
+    setNextInfo(r.ok ? `отправлено то, что по плану было ${new Date(r.run_at!).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}` : 'запланированных шагов больше нет')
     if (!r.ok) setTyping(false)
   }
 
