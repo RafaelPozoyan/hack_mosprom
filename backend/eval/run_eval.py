@@ -82,6 +82,12 @@ def calibrate(top: dict) -> tuple[float, float]:
     return ((max(below) + best_t) / 2 if below else best_t), best_acc
 
 
+def has_facts(answer: str, expect: list) -> bool:
+    """Каждый ожидаемый факт есть в ответе; вложенный список — варианты записи одного факта («шест», «6 мес»)."""
+    text = answer.lower().replace("ё", "е")
+    return all(any(v.lower().replace("ё", "е") in text for v in (e if isinstance(e, list) else [e])) for e in expect)
+
+
 async def end_to_end(qs: list[dict]) -> list[dict]:
     rows = []
     async with session() as s:
@@ -90,7 +96,7 @@ async def end_to_end(qs: list[dict]) -> list[dict]:
             res = await answer(s, q["q"])
             ok = None
             if q.get("answerable", True):
-                ok = res.answered and all(e.lower() in res.text.lower() for e in q.get("expect", []))
+                ok = res.answered and has_facts(res.text, q.get("expect", []))
             rows.append({"q": q["q"], "answerable": q.get("answerable", True), "answered": res.answered, "correct": ok,
                          "reason": res.reason, "score": res.best_score, "answer": res.text, "sec": round(time.monotonic() - t0, 1)})
             print(f"  [{rows[-1]['sec']}s] {'✓' if (ok or (not q.get('answerable', True) and not res.answered)) else '✗'} {q['q']} → {res.reason}")
