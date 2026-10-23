@@ -1,0 +1,38 @@
+[project]
+name = "korsik"
+version = "0.1.0"
+description = "Корсик — ИИ-ассистент адаптации сотрудников Группы ПОЛИПЛАСТИК в мессенджере MAX"
+requires-python = ">=3.13"
+dependencies = [
+    "asyncpg>=0.32.0",
+    "fastapi>=0.161.1",
+    "holidays>=0.107",
+    "httpx>=0.28.1",
+    "openai>=3.37.0",
+    "pgvector>=0.5.1",
+    "pydantic-settings>=2.16.1",
+    "python-multipart>=0.0.32",
+    "python-pptx>=1.0.2",
+    "pyyaml>=6.0.3",
+    "segno>=1.6.6",
+    "sqlalchemy[asyncio]>=2.1.6",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 110
+
+[dependency-groups]
+dev = [
+    "pillow>=13.0.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.2",
+]
+
+[tool.ruff.lint]
+# B008: Depends()/File() в аргументах — штатная идиома FastAPI; BLE001: фоновые задачи бота не должны падать целиком
+ignore = ["B008", "BLE001"]

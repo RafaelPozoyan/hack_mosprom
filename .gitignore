@@ -1,3 +1,17 @@
+.env
+**/node_modules/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+web/dist/
+backend/data/
+backend/media/upload_*
+backend/eval/results.json
+ocr/*.traineddata
+materials/
+
+# материалы кейса, если их положили в корень
 Антикоррупционная политика.pptx
 КЕЙС_ПОЛИПЛАСТИК.pdf
 Политика в области качества и экологии.pptx

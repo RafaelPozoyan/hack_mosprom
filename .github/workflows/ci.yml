@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+
+  authorship:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Нет подписей ИИ-агентов в коммитах (AGENTS.md, раздел 1)
+        run: |
+          pattern='co-authored-by:.*(claude|anthropic|openai|chatgpt|copilot|cursor|codex|gemini|devin|aider)|generated (with|by) \[?(claude|chatgpt|copilot|cursor|codex|gemini)|noreply@anthropic\.com|🤖'
+          if git log --format='%B' "origin/${{ github.base_ref }}..HEAD" | grep -qiE "$pattern"; then
+            echo "В коммитах PR есть подпись ИИ-агента. Перепишите сообщения коммитов."
+            exit 1
+          fi

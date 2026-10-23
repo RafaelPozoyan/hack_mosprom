@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0b2e3a;
+  --color-ink-2: #12495b;
+  --color-lime: #a6ce39;
+  --color-lime-2: #8fb52b;
+  --color-sky: #3ca0be;
+  --color-paper: #f4f7f6;
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body {
+  @apply bg-paper text-ink antialiased;
+}
