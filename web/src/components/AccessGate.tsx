@@ -108,7 +108,7 @@ export default function AccessGate({
                 disabled={busy}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                className={`${inputCls} mt-2`}
+                className={`${inputCls} mt-2 block w-full`}
               />
             </label>
             {error && (
