@@ -1,4 +1,4 @@
-"""Команда новичка: смена руководителя и рекрутера, обращения уходят новому рекрутеру."""
+"""Команда адаптации: состав, отказ удаления с закреплёнными новичками и переназначение рекрутера."""
 
 import asyncio
 import os
@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app import channels, scheduler
 from app.api import admin, team
 from app.bot import escalation
+from app.config import settings
 from app.db import Base, get_session
 from app.models import Employee, Job, Message, Site, Staff, Ticket, TicketDeadline
 
@@ -88,6 +89,49 @@ async def call(db, method: str, path: str, **kw) -> httpx.Response:
     app.dependency_overrides[get_session] = session_override
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         return await client.request(method, path, **kw)
+
+
+@pytest.mark.asyncio
+async def test_team_add_edit_remove_and_qr(db, monkeypatch):
+    added = (
+        await call(db, "POST", "/api/team", json={"name": "  Ольга   Белова ", "role": "recruiter"})
+    ).json()
+    assert added["name"] == "Ольга Белова" and added["newcomers"] == 0 and not added["max_connected"]
+    members = (await call(db, "GET", "/api/team")).json()
+    assert [(m["name"], m["newcomers"]) for m in members] == [
+        ("Игорь Волков", 1),
+        ("Мария Кузнецова", 1),
+        ("Олег Белов", 0),
+        ("Ольга Белова", 0),
+    ]  # HR-менеджер работает в панели и в команду уведомлений не входит
+    assert next(m for m in members if m["name"] == "Мария Кузнецова")["max_connected"]
+    edited = await call(
+        db, "PATCH", f"/api/team/{added['id']}", json={"name": "Ольга Белова", "role": "head"}
+    )
+    assert edited.json()["role"] == "head"
+    assert (await call(db, "POST", "/api/team", json={"name": " ", "role": "manager"})).status_code == 422
+
+    monkeypatch.setattr(settings(), "max_bot_name", "")
+    off = await call(db, "GET", f"/api/team/{added['id']}/qr.svg")
+    assert off.status_code == 404 and "не настроен" in off.json()["detail"]
+    monkeypatch.setattr(settings(), "max_bot_name", "korsik_demo_bot")
+    qr = await call(db, "GET", f"/api/team/{added['id']}/qr.svg")
+    assert qr.status_code == 200 and qr.headers["content-type"] == "image/svg+xml"
+
+    assert (await call(db, "DELETE", f"/api/team/{added['id']}")).status_code == 200
+    assert "Ольга Белова" not in [m["name"] for m in (await call(db, "GET", "/api/team")).json()]
+
+
+@pytest.mark.asyncio
+async def test_member_with_newcomers_is_kept_until_reassigned(db):
+    refused = await call(db, "DELETE", "/api/team/2")
+    assert refused.status_code == 409
+    assert "переназначьте" in refused.json()["detail"] and "Демо Иван Петров" in refused.json()["detail"]
+    role = await call(db, "PATCH", "/api/team/2", json={"name": "Мария Кузнецова", "role": "manager"})
+    assert role.status_code == 409
+    moved = await call(db, "PUT", "/api/employees/1/team", json={"manager_id": 4, "recruiter_id": 3})
+    assert moved.json() == {"manager": "Игорь Волков", "recruiter": "Олег Белов"}
+    assert (await call(db, "DELETE", "/api/team/2")).status_code == 200
 
 
 @pytest.mark.asyncio
