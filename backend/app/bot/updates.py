@@ -151,7 +151,10 @@ async def _on_hr_chat(msg: dict, text: str) -> None:
         if text.lower() in ("/close", "/закрыть"):
             await escalation.close(s, t)
         else:
-            await escalation.hr_reply(s, t, text, author)
+            try:
+                await escalation.hr_reply(s, t, text, author)
+            except escalation.TicketClosedError as e:
+                await channels.post_hr_chat(OutMessage(text=f"Обращение #{t.id}: {e}"))
 
 
 async def poll_loop() -> None:

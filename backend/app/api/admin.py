@@ -369,11 +369,16 @@ async def list_tickets(status: str | None = None, s: AsyncSession = Depends(get_
     return [ticket_view(t) for t in (await s.scalars(q)).all()]
 
 
-@router.get("/tickets/{tid}")
-async def get_ticket(tid: int, s: AsyncSession = Depends(get_session)):
+async def _ticket(s: AsyncSession, tid: int) -> Ticket:
     t = await s.get(Ticket, tid)
     if not t:
-        raise HTTPException(404)
+        raise HTTPException(404, "Обращение не найдено")
+    return t
+
+
+@router.get("/tickets/{tid}")
+async def get_ticket(tid: int, s: AsyncSession = Depends(get_session)):
+    t = await _ticket(s, tid)
     msgs = (await s.scalars(
         select(Message).where(Message.employee_id == t.employee_id, Message.author.in_(["employee", "bot", "hr"]),
                               Message.created_at >= t.created_at).order_by(Message.id)
@@ -392,14 +397,17 @@ class ReplyIn(BaseModel):
 
 @router.post("/tickets/{tid}/reply")
 async def reply_ticket(tid: int, body: ReplyIn, s: AsyncSession = Depends(get_session)):
-    t = await s.get(Ticket, tid)
-    await escalation.hr_reply(s, t, body.text, body.author)
+    t = await _ticket(s, tid)
+    try:
+        await escalation.hr_reply(s, t, body.text, body.author)
+    except escalation.TicketClosedError as e:
+        raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
 
 @router.post("/tickets/{tid}/close")
 async def close_ticket(tid: int, s: AsyncSession = Depends(get_session)):
-    t = await s.get(Ticket, tid)
+    t = await _ticket(s, tid)
     await escalation.close(s, t, notify=t.kind != "alert")
     return {"ok": True}
 

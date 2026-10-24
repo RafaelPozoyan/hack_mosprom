@@ -23,6 +23,10 @@ log = logging.getLogger(__name__)
 KIND_LABEL = {"question": "вопрос без ответа", "problem": "проблема", "alert": "красный флаг"}
 
 
+class TicketClosedError(ValueError):
+    pass
+
+
 class Handoff(BaseModel):
     summary: str
     suggested_action: str
@@ -152,6 +156,8 @@ async def forward_from_employee(s: AsyncSession, emp: Employee, text: str) -> No
 
 
 async def hr_reply(s: AsyncSession, t: Ticket, text: str, author: str = "HR") -> None:
+    if t.status == "closed":
+        raise TicketClosedError("Обращение уже закрыто. Ответ не отправлен.")
     emp = t.employee
     await channels.send(
         s,
@@ -166,6 +172,8 @@ async def hr_reply(s: AsyncSession, t: Ticket, text: str, author: str = "HR") ->
 
 
 async def close(s: AsyncSession, t: Ticket, notify: bool = True) -> None:
+    if t.status == "closed":
+        return
     t.status = "closed"
     t.closed_at = datetime.now(ZoneInfo("UTC"))
     emp = t.employee
