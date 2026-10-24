@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, BookPlus, CheckCircle2, HeartHandshake } from 'lucide-react'
+import { ArrowRight, BookPlus, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, fmtDate, type Dashboard as D } from '../api'
-import { Avatar, Badge, Card, Empty, Stat, TICKET_KIND, plural, siteName, timeAgo } from '../components/ui'
+import SupportToday from '../components/SupportToday'
+import { Avatar, Badge, Card, Empty, Stat, TICKET_KIND, plural, timeAgo } from '../components/ui'
 
 const pct = (v: number | null) => (v === null ? '—' : `${v}%`)
 
@@ -95,41 +96,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="Кому нужна поддержка" subtitle="Сигналы из опросов и сообщений за 30 дней">
-          {data.risk.length === 0 ? (
-            <Empty icon={<HeartHandshake className="text-ink/30" />}>
-              Сигналов нет — новички чувствуют себя хорошо
-            </Empty>
-          ) : (
-            <div className="flex flex-col divide-y divide-ink/[0.06]">
-              {data.risk.slice(0, 6).map((r) => (
-                <Link
-                  key={r.employee_id}
-                  to={`/employees/${r.employee_id}`}
-                  className="-mx-2 flex items-start gap-3 rounded-xl px-2 py-3 hover:bg-ink/[0.025]"
-                >
-                  <Avatar name={r.name} size={36} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 font-medium">
-                      {r.name}
-                      {r.high && <Badge tone="red">срочно</Badge>}
-                    </div>
-                    <div className="text-xs text-ink/45">
-                      {siteName(r.site)} · {r.stage}
-                    </div>
-                    <div className="mt-1.5 flex flex-wrap gap-1">
-                      {[...new Set(r.signals.map((s) => s.flag))].slice(0, 4).map((f) => (
-                        <Badge key={f} tone="amber">
-                          {f}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          )}
-        </Card>
+        <SupportToday />
 
         <Card title="Настроение новичков" subtitle="Как Корсик оценил свободные ответы — по неделям">
           {data.sentiment_weekly.length === 0 ? (

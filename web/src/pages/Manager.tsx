@@ -72,6 +72,7 @@ export function ManagerCard({ code }: { code: string }) {
     )
   if (!data) return null
   const e = data.employee
+  const request = data.notifications.find((n) => n.request) // последняя рекомендация HR — без ответов новичка
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-5">
       <Card>
@@ -93,8 +94,14 @@ export function ManagerCard({ code }: { code: string }) {
           </span>
         }
       >
+        {request && (
+          <div className="mb-3 rounded-xl bg-sky-50/70 px-3 py-2.5 text-sm">
+            <div className="text-xs text-ink/50">HR просит · {timeAgo(request.at)}</div>
+            <div className="mt-0.5 font-medium">{request.request}</div>
+          </div>
+        )}
         {data.signals.length === 0 ? (
-          <Empty>Всё идёт по плану — дополнительных действий не нужно</Empty>
+          !request && <Empty>Всё идёт по плану — дополнительных действий не нужно</Empty>
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-ink/70">
