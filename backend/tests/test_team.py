@@ -19,7 +19,7 @@ from app import channels, scheduler
 from app.api import admin, team
 from app.bot import escalation
 from app.db import Base, get_session
-from app.models import Employee, Job, Message, Site, Staff, Ticket
+from app.models import Employee, Job, Message, Site, Staff, Ticket, TicketDeadline
 
 
 @pytest_asyncio.fixture
@@ -41,6 +41,7 @@ async def db(monkeypatch):
                 Employee.__table__,
                 Ticket.__table__,
                 Message.__table__,
+                TicketDeadline.__table__,
             ]
             await c.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[*tables, Job.__table__]))
         async with factory() as s:
