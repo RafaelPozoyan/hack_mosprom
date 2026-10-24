@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot import backlog
 from app.models import Employee, Job
 
 
@@ -39,6 +40,9 @@ def asks_feedback(st: dict) -> bool:
 def check_step(emp: Employee, st: dict) -> None:
     from app.bot.scenario import step
 
+    reason = backlog.skip_reason(emp, st)
+    if reason:
+        raise backlog.StepSkipped(reason)
     waiting = required_step(emp)
     if waiting and waiting != st["id"] and asks_feedback(st):
         previous = step(waiting, emp.site_code)
@@ -48,6 +52,7 @@ def check_step(emp: Employee, st: dict) -> None:
 
 async def begin(s: AsyncSession, emp: Employee, st: dict) -> None:
     state = dict(emp.state)
+    backlog.record_transition(s, emp, state, st)
     if asks_feedback(st) and (state.get("await") or {}).get("kind") == "self_intro":
         state.pop("await")
     current_survey = (state.get("survey") or {}).get("id")

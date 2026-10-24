@@ -71,11 +71,12 @@ async def run_next(emp_id: int, s: AsyncSession = Depends(get_session)):
     )
     if not j:
         return {"ok": False, "step": None}
-    # Запрос перемотки сохраняется до запуска фоновой задачи; попытку считает владелец блокировки.
+    # Сохраняем перемотку до исполнения; после сбоя запрос подберёт планировщик.
     j.status = "running"
     await s.commit()
-    asyncio.create_task(run_job(j.id))
-    return {"ok": True, "step": j.ref, "run_at": j.run_at.isoformat()}
+    await run_job(j.id)
+    await s.refresh(j)
+    return {"ok": True, "step": j.ref, "run_at": j.run_at.isoformat(), "status": j.status}
 
 
 @router.get("/stream")

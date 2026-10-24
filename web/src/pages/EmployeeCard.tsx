@@ -158,6 +158,7 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
     }
   }
   const sent = t.status === 'sent' || t.status === 'done'
+  const obsolete = t.status === 'skipped' && Boolean(t.status_note)
   return (
     <li className="flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
       <Icon size={18} className={clsx('mt-0.5 shrink-0', st.cls)} />
@@ -171,11 +172,12 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
         {(t.status === 'waiting' || t.status === 'blocked') && (
           <div className="mt-1 text-xs text-amber-700">{st.label}</div>
         )}
+        {t.status_note && <div className="mt-1 text-xs text-ink/60">{t.status_note}</div>}
         {error && <div role="alert" className="mt-2 text-sm text-rose-600">{error}</div>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <span className="text-xs text-ink/45">{t.run_at ? fmtDateTime(t.run_at) : st.label}</span>
-        {t.manual && !sent && (
+        {t.manual && !sent && !obsolete && (
           <>
             {t.step_id === 'd3_plan' && (
               <>
@@ -186,7 +188,7 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
             <Btn small onClick={() => run()} disabled={busy}>Отправить</Btn>
           </>
         )}
-        {demo && !t.manual && !sent && (
+        {demo && !t.manual && !sent && !obsolete && (
           <Btn small demo onClick={() => run()} disabled={busy}>
             <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
           </Btn>
