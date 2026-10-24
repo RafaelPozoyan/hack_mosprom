@@ -3,6 +3,7 @@ import clsx from 'clsx'
 import { FastForward, FileText, QrCode, Send } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api, fmtTime, type ChatMessage, type Employee, type UpNext } from '../api'
+import { KorsikMark } from './ui'
 
 const URL_RE = /(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s)]+|\*\*[^*]+\*\*)/g
 
@@ -247,7 +248,7 @@ export default function ChatPhone({
     <div className="flex flex-col items-center gap-3">
       <div className="flex h-[680px] w-[360px] flex-col overflow-hidden rounded-[38px] border-[10px] border-ink bg-[#e9eef0] shadow-2xl">
         <div className="flex items-center gap-2.5 bg-gradient-to-r from-ink to-ink-2 px-4 pt-4 pb-3 text-white">
-          <div className="grid size-9 place-items-center rounded-full bg-lime text-lg">🐾</div>
+          <KorsikMark className="size-9 rounded-full" />
           <div className="leading-tight">
             <div className="text-sm font-semibold">Корсик</div>
             <div className="text-[11px] text-white/70">{typing ? 'печатает…' : 'бот в MAX'}</div>

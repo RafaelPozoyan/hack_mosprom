@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     max_hr_chat_id: int | None = None  # групповой чат HR, куда бот публикует эскалации
     max_ca_bundle: str = ""  # путь к сертификату Минцифры, если он не в системном хранилище
 
+    # Демо-доступ «попробуйте сами»: диплинк https://max.ru/<bot>?start=<payload> заводит демо-новичка на каждого
+    # пользователя MAX. Пусто — выключено: в проде новички приходят только из панели и кадровой системы.
+    demo_try_payload: str = ""
+    demo_try_site: str = "GTP"  # завод — та же площадка, что в демо-сценарии README
+    demo_try_limit: int = 200  # запас на жюри и зрителей защиты; дальше QR вежливо отказывает
+
     # LLM — любой OpenAI-совместимый endpoint: llama.cpp/vLLM (GigaChat 3.1 Lightning), Yandex AI Studio, GigaChat
     llm_base_url: str = "http://localhost:8081/v1"
     llm_api_key: str = "local"
