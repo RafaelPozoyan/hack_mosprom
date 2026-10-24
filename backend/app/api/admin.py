@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import scheduler
 from app.analytics import digest, metrics
 from app.analytics.sentiment import manager_topics
-from app.bot import escalation, progress
+from app.bot import backlog, escalation, progress
 from app.bot.progress import StepBlocked
 from app.bot.scenario import (
     add_months,
@@ -215,12 +215,20 @@ async def employee_card(emp_id: int, s: AsyncSession = Depends(get_session)):
     for st, run_at in timeline(e):
         j = job_by_step.get(st["id"])
         status = "sent" if st["id"] in sent_steps else (j.status if j else ("manual" if st.get("manual") else "skipped"))
+        status_note = None
+        if j and j.status == "skipped":
+            status, status_note = "skipped", j.error
+        elif st["id"] not in sent_steps:
+            status_note = backlog.skip_reason(e, st)
+            if status_note:
+                status = "skipped"
         if st["id"] == waiting:
             status = "waiting"
         first = (st.get("messages") or [{}])[0]
         tl.append({"step_id": st["id"], "title": st.get("title", st["id"]), "phase": phase_of(st.get("at")),
                    "run_at": run_at.isoformat() if run_at else None,
                    "manual": st.get("manual", False), "audience": st.get("audience", "employee"), "status": status,
+                   "status_note": status_note,
                    "preview": render(first.get("text") or first.get("ai") or "", e)[:160]})
     answers = (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.employee_id == emp_id).order_by(SurveyAnswer.id))).all()
     survey_groups = answers_view(e, answers)
@@ -358,7 +366,8 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
             raise HTTPException(404, "Шаг для этой площадки не найден")
         try:
             progress.check_step(e, current_step)
-        except StepBlocked as exc:
+            await backlog.check_order(s, e, current_step)
+        except (StepBlocked, backlog.StepSkipped) as exc:
             raise HTTPException(409, str(exc)) from exc
         j = await s.scalar(select(Job).where(
             Job.employee_id == emp_id, Job.kind == "step", Job.ref == step_id,
@@ -385,7 +394,7 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
         j.status, j.attempts = "running", 1
         await s.commit()
         await scheduler._execute(s, j)
-        if j.status == "blocked":
+        if j.status in ("blocked", "skipped"):
             raise HTTPException(409, j.error)
         if j.status != "done":
             raise HTTPException(503, "Отправка не завершена. Задача сохранена для автоматического повтора; проверьте её состояние позже.")

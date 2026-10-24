@@ -3,7 +3,7 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -243,3 +243,113 @@ async def test_optional_self_intro_does_not_capture_next_survey_text(db):
         await scenario.run_step(s, emp, "d3_survey")
         assert "await" not in emp.state
         assert emp.state["survey"]["id"] == "day3"
+
+
+async def old_queue(db, *refs):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.start_date = date.today() - timedelta(days=120)
+        emp.probation_end = scenario.add_months(emp.start_date, 3)
+        dates = {st["id"]: at for st, at in scenario.timeline(emp)}
+        jobs = [Job(employee_id=1, kind="step", ref=ref, run_at=dates[ref]) for ref in refs]
+        s.add_all(jobs)
+        await s.commit()
+        return jobs
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ref", ["m2_congrats", "m1w3_survey", "d2_self_intro"])
+async def test_obsolete_optional_step_is_skipped_with_original_date_and_reason(db, ref):
+    (job,) = await old_queue(db, ref)
+    assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        current = await s.get(Job, job.id)
+        assert current.status == "skipped" and current.attempts == 0
+        assert current.run_at == job.run_at and "следующий опрос" in current.error
+        assert not list(await s.scalars(select(Message)))
+        card = await admin.employee_card(1, s)
+        item = next(item for item in card["timeline"] if item["step_id"] == ref)
+        assert item["status"] == "skipped" and item["status_note"] == current.error
+        upload = SimpleNamespace(filename="plan.txt", read=AsyncMock(return_value=b"unused"))
+        with pytest.raises(HTTPException) as exc:
+            await admin.run_step_now(1, ref, upload, s)
+        assert exc.value.status_code == 409
+        upload.read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_overdue_required_steps_stay_in_order_until_answered(db):
+    access, day3, week2 = await old_queue(db, "d1_access", "d3_survey", "w2_check")
+    async with db.session() as s:
+        with pytest.raises(HTTPException) as exc:
+            await admin.run_step_now(1, "w2_check", None, s)
+        assert exc.value.status_code == 409 and "обязательный шаг" in exc.value.detail
+    assert await scheduler.run_job(access.id)
+    assert await scheduler.run_job(day3.id)
+    assert await scheduler.run_job(week2.id)
+    async with db.session() as s:
+        assert (await s.get(Job, day3.id)).status == "blocked"
+        await dialog.scenario_button(s, await s.get(Employee, 1), "b:d1_access:0:0:0")
+    assert not await scheduler.run_job(week2.id)
+    assert await scheduler.run_job(day3.id)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        for qid in ("docs", "team", "tasks"):
+            await surveys.answer(s, emp, "day3", qid, "a")
+    assert await scheduler.run_job(week2.id)
+    async with db.session() as s:
+        assert progress.required_step(await s.get(Employee, 1)) == "w2_check"
+        for job in (access, day3, week2):
+            assert (await s.get(Job, job.id)).run_at == job.run_at
+
+
+@pytest.mark.asyncio
+async def test_failed_required_step_blocks_next_until_successful_manual_retry(db):
+    day3, week2 = await old_queue(db, "d3_survey", "w2_check")
+    async with db.session() as s:
+        failed = await s.get(Job, day3.id)
+        failed.status, failed.attempts = "failed", 3
+        failed.run_at = scheduler.utcnow() + timedelta(minutes=3)
+        await s.commit()
+    assert await scheduler.run_job(week2.id)
+    async with db.session() as s:
+        assert (await s.get(Job, week2.id)).status == "blocked"
+        await admin.run_step_now(1, "d3_survey", None, s)
+        emp = await s.get(Employee, 1)
+        for qid in ("docs", "team", "tasks"):
+            await surveys.answer(s, emp, "day3", qid, "a")
+        assert (await s.get(Job, day3.id)).status == "failed"  # история ошибки не стирается
+    assert await scheduler.run_job(week2.id)
+
+
+@pytest.mark.asyncio
+async def test_partial_optional_answers_and_skip_reason_survive_next_checkpoint(db):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await scenario.run_step(s, emp, "m1w3_survey")
+        await surveys.answer(s, emp, "month2", "mood", "a")
+        await scenario.run_step(s, emp, "final")
+        assert len(list(await s.scalars(select(SurveyAnswer)))) == 1
+        reminders = list(await s.scalars(select(Job).where(Job.ref == "month2")))
+        assert all(j.status == "cancelled" for j in reminders)
+        card = await admin.employee_card(1, s)
+        item = next(item for item in card["timeline"] if item["step_id"] == "m1w3_survey")
+        assert item["status"] == "skipped" and "Полученные ответы сохранены" in item["status_note"]
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        assert emp.state["feedback_checkpoint"] == "final"
+        with pytest.raises(HTTPException) as exc:
+            await admin.run_step_now(1, "m2_congrats", None, s)
+        assert exc.value.status_code == 409  # дата ещё не наступила, но демо уже дошло до итогов
+        await scenario.run_step(s, emp, "d1_lunch")
+        assert progress.required_step(emp) == "final"
+
+
+@pytest.mark.asyncio
+async def test_demo_reports_skipped_instead_of_sent(db):
+    (job,) = await old_queue(db, "m2_congrats")
+    async with db.session() as s:
+        result = await demo.run_next(1, s)
+        assert result["status"] == "skipped"
+        assert datetime.fromisoformat(result["run_at"]) == job.run_at
+        assert (await s.get(Job, job.id)).status == "skipped"

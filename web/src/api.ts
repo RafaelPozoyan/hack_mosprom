@@ -129,7 +129,7 @@ export const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('ru-RU'
 export const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' })
 
-export type TimelineStep = { step_id: string; title: string; phase: string; run_at: string | null; manual: boolean; audience: string; status: string; preview: string }
+export type TimelineStep = { step_id: string; title: string; phase: string; run_at: string | null; manual: boolean; audience: string; status: string; status_note: string | null; preview: string }
 export type SurveyGroup = { title: string; at: string; items: { question: string; answer: string; comment: string | null; concern: boolean; flag: string | null }[] }
 export type AnalysisItem = { text: string; sentiment: string; emotions: string[]; topics: string[]; risk_flags: string[]; severity: string; summary: string; source: string; at: string }
 export type Notification = { to?: string; text: string; delivered: boolean; at: string }

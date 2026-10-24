@@ -217,12 +217,18 @@ async def test_demo_next_is_durable_and_does_not_advance_while_running(db, monke
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as api:
             assert not await scheduler.run_job(first)  # без перемотки будущий шаг не выполняется
-            assert (await api.post("/api/demo/employees/1/next")).json()["ok"]
-            await asyncio.wait_for(started.wait(), timeout=5)
-            assert (await api.post("/api/demo/employees/1/next")).json()["ok"]
-            async with db.session() as s:
-                assert (await s.get(Job, first)).attempts == 1
-                assert (await s.get(Job, second)).status == "pending"
+            request = asyncio.create_task(api.post("/api/demo/employees/1/next"))
+            try:
+                await asyncio.wait_for(started.wait(), timeout=5)
+                response = await api.post("/api/demo/employees/1/next")
+                assert response.json()["status"] == "running"
+                async with db.session() as s:
+                    assert (await s.get(Job, first)).attempts == 1
+                    assert (await s.get(Job, second)).status == "pending"
+            finally:
+                release.set()
+                response = await asyncio.wait_for(request, timeout=5)
+            assert response.json()["status"] == "done"
     finally:
         release.set()
         await asyncio.wait_for(finished.wait(), timeout=5)

@@ -136,9 +136,22 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
   }
   const next = async () => {
     busy()
-    const r = await api.post<{ ok: boolean; step: string | null; run_at?: string }>(`${base}/next`)
-    setNextInfo(r.ok ? `отправлено то, что по плану было ${new Date(r.run_at!).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}` : 'запланированных шагов больше нет')
-    if (!r.ok) setTyping(false)
+    try {
+      const r = await api.post<{ ok: boolean; status?: string; run_at?: string }>(`${base}/next`)
+      const status: Record<string, string> = {
+        done: 'Шаг выполнен', skipped: 'Шаг пропущен', blocked: 'Ждём обязательный ответ',
+        pending: 'Шаг ждёт повторной отправки', failed: 'Не удалось выполнить шаг', running: 'Шаг ещё обрабатывается',
+      }
+      const result = status[r.status ?? ''] ?? 'Проверьте состояние шага'
+      setNextInfo(r.ok
+        ? `${result} · по плану ${new Date(r.run_at!).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}`
+        : 'Запланированных шагов больше нет')
+      onActivity?.()
+    } catch {
+      setNextInfo('Не удалось подтвердить результат. Проверьте путь адаптации перед повтором.')
+    } finally {
+      setTyping(false)
+    }
   }
 
   return (
