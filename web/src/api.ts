@@ -105,7 +105,18 @@ export type Meta = {
   llm_model: string
 }
 
-const token = () => localStorage.getItem('korsik_token') ?? ''
+const token = () => sessionStorage.getItem('korsik_token') ?? localStorage.getItem('korsik_token') ?? ''
+export const AUTH_EXPIRED = 'korsik:auth-expired'
+
+export function clearToken() {
+  sessionStorage.removeItem('korsik_token')
+  localStorage.removeItem('korsik_token')
+}
+
+export function saveToken(value: string) {
+  clearToken()
+  sessionStorage.setItem('korsik_token', value)
+}
 
 export class ApiError extends Error {
   readonly status: number
@@ -128,11 +139,22 @@ export class ApiError extends Error {
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) }
-  if (token()) headers.Authorization = `Bearer ${token()}`
+  const credential = token()
+  if (credential) headers.Authorization = `Bearer ${credential}`
   if (init?.body && !(init.body instanceof FormData)) headers['Content-Type'] = 'application/json'
   const r = await fetch(path, { ...init, headers })
-  if (!r.ok) throw new ApiError(r.status, await r.text())
+  if (!r.ok) {
+    if (r.status === 401 && credential === token()) window.dispatchEvent(new Event(AUTH_EXPIRED))
+    throw new ApiError(r.status, await r.text())
+  }
   return r.json()
+}
+
+export async function checkAccess(credential = token()): Promise<{ required: boolean }> {
+  const headers: Record<string, string> = credential ? { Authorization: `Bearer ${credential}` } : {}
+  const response = await fetch('/api/auth', { headers })
+  if (!response.ok) throw new ApiError(response.status, await response.text())
+  return response.json()
 }
 
 export const api = {

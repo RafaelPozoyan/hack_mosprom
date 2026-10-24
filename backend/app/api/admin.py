@@ -63,6 +63,11 @@ def auth(authorization: str | None = Header(None), token: str | None = Query(Non
 router = APIRouter(prefix="/api", dependencies=[Depends(auth)])
 
 
+@router.get("/auth")
+async def check_access():
+    return {"required": bool(settings().admin_token)}
+
+
 # --- справочники -------------------------------------------------------------------------------------
 
 
