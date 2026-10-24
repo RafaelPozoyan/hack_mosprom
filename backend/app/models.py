@@ -211,3 +211,24 @@ class Digest(Base):
     stats: Mapped[dict] = mapped_column(JSONB)
     text: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class MaxUpdate(Base):
+    """Принятые события вебхука: ключ остаётся после обработки, исходное тело очищается."""
+
+    __tablename__ = "max_updates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_key: Mapped[str] = mapped_column(String(64), unique=True)
+    actor: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | done | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(200))
+
+    __table_args__ = (
+        Index("ix_max_updates_due", "status", "available_at"),
+        Index("ix_max_updates_actor", "actor", "status", "id"),
+    )

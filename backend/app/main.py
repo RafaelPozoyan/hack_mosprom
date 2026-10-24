@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,8 +13,9 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app import scheduler
 from app.api import admin, demo
+from app.bot import inbox
 from app.bot.scenario import scenario
-from app.bot.updates import poll_loop, process_max_update
+from app.bot.updates import poll_loop
 from app.channels.max import max_client
 from app.config import settings
 from app.db import init_db, session
@@ -43,22 +46,30 @@ async def seed_sites() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     cfg = settings()
+    if cfg.max_webhook_url and not (cfg.max_token and cfg.max_webhook_secret):
+        raise ValueError("Для вебхука нужны MAX_TOKEN и MAX_WEBHOOK_SECRET")
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     await init_db()
     await seed_sites()
-    tasks = [asyncio.create_task(scheduler.loop())]
     client = max_client()
     if client and cfg.max_webhook_url:
         await client.subscribe(cfg.max_webhook_url, cfg.max_webhook_secret)
         log.info("MAX: webhook %s", cfg.max_webhook_url)
     elif client:
-        tasks.append(asyncio.create_task(poll_loop()))
         log.info("MAX: long polling (dev)")
     else:
         log.info("MAX_TOKEN не задан — работает демо-канал в веб-панели")
-    yield
-    for t in tasks:
-        t.cancel()
+    tasks = [asyncio.create_task(scheduler.loop())]
+    if client:
+        tasks.extend(asyncio.create_task(inbox.loop()) for _ in range(inbox.WORKERS))
+        if not cfg.max_webhook_url:
+            tasks.append(asyncio.create_task(poll_loop()))
+    try:
+        yield
+    finally:
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 app = FastAPI(title="Корсик — ИИ-ассистент адаптации", lifespan=lifespan)
@@ -71,11 +82,15 @@ app.mount("/media", StaticFiles(directory=settings().media_dir), name="media")
 
 @app.post("/max/webhook")
 async def max_webhook(request: Request, x_max_bot_api_secret: str | None = Header(None)):
-    secret = settings().max_webhook_secret
-    if secret and x_max_bot_api_secret != secret:
+    cfg = settings()
+    if not (cfg.max_token and cfg.max_webhook_secret):
+        raise HTTPException(503, "Вебхук MAX не настроен")
+    if not secrets.compare_digest((x_max_bot_api_secret or "").encode(), cfg.max_webhook_secret.encode()):
         raise HTTPException(403)
-    # MAX ждёт 200 быстро и повторяет доставку при ошибке — обрабатываем событие в фоне
-    asyncio.create_task(process_max_update(await request.json()))
+    try:
+        await inbox.enqueue(await request.json())
+    except (inbox.InvalidUpdate, json.JSONDecodeError) as e:
+        raise HTTPException(422, "Некорректное событие MAX") from e
     return {"ok": True}
 
 

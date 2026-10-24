@@ -31,7 +31,7 @@ CODE_TAKEN = (
 TICKET_REF = re.compile(r"#(\d+)")
 
 
-async def handle_employee_event(employee_id: int, ev: InEvent) -> None:
+async def handle_employee_event(employee_id: int, ev: InEvent, *, raise_errors: bool = False) -> None:
     async with _locks[employee_id], session() as s:
         emp = await s.get(Employee, employee_id)
         if emp is None:
@@ -39,7 +39,9 @@ async def handle_employee_event(employee_id: int, ev: InEvent) -> None:
         try:
             await dialog.handle(s, emp, ev)
         except Exception:
-            log.exception("event handling failed: employee=%s event=%s", employee_id, ev)
+            log.exception("event handling failed: employee=%s kind=%s", employee_id, ev.kind)
+            if raise_errors:
+                raise
 
 
 def _button_text(message: dict, payload: str) -> str:
@@ -52,12 +54,12 @@ def _button_text(message: dict, payload: str) -> str:
     return ""
 
 
-async def process_max_update(upd: dict) -> None:
+async def process_max_update(upd: dict, *, raise_errors: bool = False) -> None:
     client = max_client()
     kind = upd.get("update_type")
     try:
         if kind == "bot_started":
-            await _on_started(upd["user"], upd.get("payload") or "")
+            await _on_started(upd["user"], upd.get("payload") or "", raise_errors=raise_errors)
         elif kind == "message_callback":
             cb = upd["callback"]
             try:  # снимает «часики» с кнопки; ошибка здесь не должна мешать обработке нажатия
@@ -71,6 +73,7 @@ async def process_max_update(upd: dict) -> None:
                     emp_id,
                     InEvent("callback", payload=cb.get("payload", ""), text=_button_text(msg, cb.get("payload", "")),
                             callback_id=cb["callback_id"], message_mid=(msg.get("body") or {}).get("mid")),
+                    raise_errors=raise_errors,
                 )
         elif kind == "message_created":
             msg = upd["message"]
@@ -82,11 +85,13 @@ async def process_max_update(upd: dict) -> None:
             user_id = (msg.get("sender") or {}).get("user_id")
             emp_id = await _employee_by_user(user_id)
             if emp_id:
-                await handle_employee_event(emp_id, InEvent("text", text=text))
+                await handle_employee_event(emp_id, InEvent("text", text=text), raise_errors=raise_errors)
             elif user_id:
                 await client.send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
     except Exception:
-        log.exception("MAX update failed: %s", upd)
+        log.exception("MAX update failed: type=%s", kind)
+        if raise_errors:
+            raise
 
 
 async def _employee_by_user(user_id: int | None) -> int | None:
@@ -96,7 +101,7 @@ async def _employee_by_user(user_id: int | None) -> int | None:
         return await s.scalar(select(Employee.id).where(Employee.max_user_id == user_id))
 
 
-async def _on_started(user: dict, payload: str) -> None:
+async def _on_started(user: dict, payload: str, *, raise_errors: bool = False) -> None:
     user_id = user["user_id"]
     async with session() as s:
         if payload.startswith("staff_"):
@@ -127,7 +132,7 @@ async def _on_started(user: dict, payload: str) -> None:
         else:
             emp_id = await s.scalar(select(Employee.id).where(Employee.max_user_id == user_id))
     if emp_id:
-        await handle_employee_event(emp_id, InEvent("start", payload=payload))
+        await handle_employee_event(emp_id, InEvent("start", payload=payload), raise_errors=raise_errors)
     else:
         await max_client().send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
 
