@@ -238,6 +238,19 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
             select(Job).where(Job.employee_id == emp.id, Job.kind == "step", Job.status == "await_start")
         )
     }
+    # Перенос даты выхода не повторяет шаг, который уже ушёл, выполняется или ждёт обязательного ответа.
+    kept = set(
+        await s.scalars(
+            select(Job.ref).where(
+                Job.employee_id == emp.id, Job.kind == "step", Job.status.in_(["done", "running", "blocked"])
+            )
+        )
+    )
+    kept |= set(
+        await s.scalars(
+            select(Message.step_id).where(Message.employee_id == emp.id, Message.step_id.is_not(None))
+        )
+    )
     await s.execute(
         update(Job)
         .where(Job.employee_id == emp.id, Job.status == "pending", Job.kind == "step")
@@ -256,7 +269,7 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
                 job.status, job.error = "pending", None
             n += 1
             continue
-        if run_at < now:
+        if run_at < now or st["id"] in kept:
             continue
         s.add(Job(employee_id=emp.id, kind="step", ref=st["id"], run_at=run_at))
         n += 1

@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://korsik:korsik@localhost:55433/korsik"
     admin_token: str = ""  # пусто — админка без авторизации (только для локального демо)
+    hr_api_key: str = ""  # ключ API кадровой системы (/api/hr-system); пусто — API выключен
     public_base_url: str = "http://localhost:8000"
 
     # MAX Bot API (https://dev.max.ru/docs-api). Без токена работает только демо-канал в веб-админке.
