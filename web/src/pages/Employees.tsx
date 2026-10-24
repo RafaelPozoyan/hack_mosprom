@@ -3,7 +3,19 @@ import { Check, Copy, Download, Plus, Search, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { api, fmtDate, probationDay, withToken, type Employee, type Meta } from '../api'
-import { Avatar, Badge, Btn, Card, Empty, Field, Modal, Progress, inputCls, siteName } from '../components/ui'
+import {
+  Avatar,
+  Badge,
+  Btn,
+  Card,
+  Empty,
+  Field,
+  Modal,
+  Progress,
+  inputCls,
+  siteName,
+  timeAgo,
+} from '../components/ui'
 
 export function StageCell({ e }: { e: Pick<Employee, 'status' | 'start_date' | 'probation_end'> }) {
   const { day, total } = probationDay(e)
@@ -90,8 +102,12 @@ export default function Employees() {
                   </td>
                   <td className="text-right">
                     <div className="flex justify-end gap-1">
+                      {e.signal && (
+                        <Badge tone={e.signal.urgent ? 'red' : 'amber'}>
+                          {e.signal.reason} · {timeAgo(e.signal.at)}
+                        </Badge>
+                      )}
                       {e.open_ticket && <Badge tone="red">ждёт ответа HR</Badge>}
-                      {!e.open_ticket && !!e.signals && <Badge tone="amber">нужна поддержка</Badge>}
                     </div>
                   </td>
                 </tr>
