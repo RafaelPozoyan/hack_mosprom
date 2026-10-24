@@ -73,7 +73,9 @@ async def start(s: AsyncSession, emp: Employee, survey_id: str) -> None:
     await s.commit()
     await _ask(s, emp)
     now = datetime.now(ZoneInfo("UTC"))
-    for d in scenario()["reminder"]["after_days"]:
+    scheduled = (emp.state.get("required_step") or {}).get("key")
+    days = [] if scheduled else scenario()["reminder"]["after_days"]
+    for d in days:
         s.add(Job(employee_id=emp.id, kind="reminder", ref=survey_id, run_at=now + timedelta(days=d)))
     await s.commit()
 

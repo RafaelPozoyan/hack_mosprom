@@ -89,7 +89,7 @@ async def _retry(s, job: Job, error: str) -> None:
 async def _execute(s, job: Job) -> None:
     from app import channels
     from app.analytics import digest
-    from app.bot import backlog, escalation, surveys
+    from app.bot import backlog, escalation, followup, surveys
     from app.bot.progress import StepBlocked
     from app.bot.scenario import run_step
     from app.channels import OutMessage
@@ -104,6 +104,10 @@ async def _execute(s, job: Job) -> None:
                 await channels.send(s, emp, OutMessage(text="📎 " + attachment.name, file=attachment.file), step_id=job.ref)
         elif job.kind == "reminder" and emp:
             await surveys.remind(s, emp, job.ref)
+        elif job.kind == "required_reminder" and emp:
+            await followup.remind(s, emp, job.ref)
+        elif job.kind == "required_escalation" and emp:
+            await followup.escalate(s, emp, job.ref)
         elif job.kind == "handoff":
             await escalation.finalize(s, int(job.ref))
         elif job.kind == "digest":

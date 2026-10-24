@@ -11,13 +11,14 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy import select, text, update
+from sqlalchemy import func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import channels, scheduler
 from app.analytics import sentiment
 from app.api import admin, demo
-from app.bot import dialog, progress, scenario, surveys
+from app.bot import dialog, escalation, followup, progress, scenario, surveys
 from app.db import Base
 from app.models import Analysis, Employee, Job, Message, Site, Staff, StepAttachment, SurveyAnswer, Ticket
 
@@ -146,7 +147,7 @@ async def test_survey_resume_preserves_question_and_completion_releases_wait(db,
         assert emp.state["survey"]["q"] == 1
         await scenario.run_step(s, emp, "d3_survey")
         assert emp.state["survey"]["q"] == 1
-        reminders = list(await s.scalars(select(Job).where(Job.kind == "reminder")))
+        reminders = list(await s.scalars(select(Job).where(Job.kind == "required_reminder")))
         assert len(reminders) == 2
         with pytest.raises(progress.StepBlocked):
             await scenario.run_step(s, emp, "w2_check")
@@ -213,7 +214,9 @@ async def test_demo_keeps_original_date_when_feedback_is_blocked(db, monkeypatch
         job = await s.get(Job, jid)
         job.run_at = scheduler.utcnow() + timedelta(days=14)
         original_time = job.run_at
-        await s.execute(update(Job).where(Job.kind == "reminder").values(status="cancelled"))
+        await s.execute(
+            update(Job).where(Job.kind.in_(["reminder", *followup.KINDS])).values(status="cancelled")
+        )
         await s.commit()
     finished = asyncio.Event()
 
@@ -353,3 +356,214 @@ async def test_demo_reports_skipped_instead_of_sent(db):
         assert result["status"] == "skipped"
         assert datetime.fromisoformat(result["run_at"]) == job.run_at
         assert (await s.get(Job, job.id)).status == "skipped"
+
+
+async def start_required(db, step_id="d1_access"):
+    async with db.session() as s:
+        await scenario.run_step(s, await s.get(Employee, 1), step_id)
+        return list(await s.scalars(select(Job).where(Job.kind.in_(followup.KINDS)).order_by(Job.run_at)))
+
+
+async def make_due(db, job):
+    async with db.session() as s:
+        await s.execute(update(Job).where(Job.id == job.id).values(run_at=scheduler.utcnow()))
+        await s.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["ty", "vy"])
+async def test_required_reminders_keep_schedule_on_resume_and_cancel_on_answer(db, form):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.address_form = form
+        await s.commit()
+    jobs = await start_required(db)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        started = datetime.fromisoformat(emp.state["required_step"]["started_at"])
+        assert [j.run_at - started for j in jobs] == [timedelta(days=n) for n in (1, 2, 3)]
+        await scenario.run_step(s, emp, "d1_access")
+        assert await s.scalar(select(func.count()).select_from(Job)) == 3
+    for job in jobs[:2]:
+        await make_due(db, job)
+        assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        messages = list(await s.scalars(select(Message).where(Message.text.contains("Напоминаю"))))
+        assert len(messages) == 2
+        assert ("ответь" if form == "ty" else "ответьте") in messages[0].text
+        key = (await s.get(Employee, 1)).state["required_step"]["key"]
+        assert messages[0].payload["buttons"][0][0]["payload"] == f"a:required:{key}"
+        await dialog.scenario_button(s, await s.get(Employee, 1), "b:d1_access:0:0:1")
+        assert (await s.get(Job, jobs[2].id)).status == "cancelled"
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 0
+
+
+@pytest.mark.asyncio
+async def test_escalation_survives_interruption_without_duplicate_ticket(db, monkeypatch):
+    jobs = await start_required(db)
+    job = jobs[-1]
+    await make_due(db, job)
+    original = followup.escalate
+
+    async def crash_after_commit(*args):
+        await original(*args)
+        raise RuntimeError("interrupted after committed escalation")
+
+    monkeypatch.setattr(followup, "escalate", crash_after_commit)
+    assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        ticket = await s.scalar(select(Ticket))
+        tid = ticket.id
+        assert ticket.kind == "problem" and ticket.severity == "low"
+        assert "Проверка доступов" in ticket.subject
+        emp = await s.get(Employee, 1)
+        assert emp.state["required_step"]["ticket_id"] == tid
+        assert "ticket_id" not in emp.state  # молчание не включает принудительный диалог с HR
+        assert all([(await s.get(Job, j.id)).status == "cancelled" for j in jobs[:2]])
+        assert (await s.get(Job, job.id)).status == "pending"
+    monkeypatch.setattr(followup, "escalate", original)
+    await make_due(db, job)
+    assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 1
+        assert await s.scalar(select(func.count()).select_from(Job).where(Job.kind == "handoff")) == 1
+        await dialog.scenario_button(s, await s.get(Employee, 1), "b:d1_access:0:0:0")
+        assert (await s.get(Ticket, tid)).status == "open"  # поздний ответ не стирает историю HR
+        assert progress.required_step(await s.get(Employee, 1)) is None
+
+
+@pytest.mark.asyncio
+async def test_escalation_rollback_does_not_lose_or_duplicate_signal(db):
+    jobs = await start_required(db)
+    job = jobs[-1]
+    await make_due(db, job)
+    async with db.session() as s:
+        await s.execute(text("ALTER TABLE jobs ADD CONSTRAINT reject_handoff CHECK (kind <> 'handoff')"))
+        await s.commit()
+    assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 0
+        assert "ticket_id" not in (await s.get(Employee, 1)).state["required_step"]
+        await s.execute(text("ALTER TABLE jobs DROP CONSTRAINT reject_handoff"))
+        await s.commit()
+    await make_due(db, job)
+    assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 1
+
+
+@pytest.mark.asyncio
+async def test_required_schedule_rolls_back_with_waiting_marker(db):
+    async with db.session() as s:
+        await s.execute(
+            text("ALTER TABLE jobs ADD CONSTRAINT reject_required CHECK (kind <> 'required_escalation')")
+        )
+        await s.commit()
+        with pytest.raises(IntegrityError):
+            await scenario.run_step(s, await s.get(Employee, 1), "d1_access")
+        await s.rollback()
+    async with db.session() as s:
+        assert progress.required_step(await s.get(Employee, 1)) is None
+        assert await s.scalar(select(func.count()).select_from(Job)) == 0
+        assert await s.scalar(select(func.count()).select_from(Message)) == 0
+
+
+@pytest.mark.asyncio
+async def test_obsolete_reminders_and_callbacks_do_not_touch_new_waiting(db):
+    jobs = await start_required(db)
+    key = jobs[0].ref
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await dialog.scenario_button(s, emp, "b:d1_access:0:0:0")
+        await scenario.run_step(s, emp, "d3_survey")
+        count = await s.scalar(select(func.count()).select_from(Message))
+        await followup.remind(s, emp, key)
+        await followup.escalate(s, emp, key)
+        await dialog.action(s, emp, f"required:{key}")
+        assert await s.scalar(select(func.count()).select_from(Message)) == count
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 0
+        assert progress.required_step(emp) == "d3_survey"
+        for qid in ("docs", "team", "tasks"):
+            await surveys.answer(s, emp, "day3", qid, "a")
+        pending = await s.scalar(select(Job.id).where(Job.status == "pending"))
+        assert pending is None
+
+
+@pytest.mark.asyncio
+async def test_silence_in_optional_survey_does_not_escalate(db):
+    async with db.session() as s:
+        await scenario.run_step(s, await s.get(Employee, 1), "m1w3_survey")
+        jobs = list(await s.scalars(select(Job)))
+        assert len(jobs) == 2 and all(j.kind == "reminder" for j in jobs)
+
+
+@pytest.mark.asyncio
+async def test_recruiter_receives_signal_without_manager_notification(db, monkeypatch):
+    jobs = await start_required(db)
+    await make_due(db, jobs[-1])
+    assert await scheduler.run_job(jobs[-1].id)
+    async with db.session() as s:
+        recruiter = Staff(name="Демо HR", role="recruiter", invite_code="recruiter", max_user_id=7)
+        manager = Staff(name="Демо руководитель", role="manager", invite_code="manager", max_user_id=8)
+        s.add_all([recruiter, manager])
+        await s.flush()
+        emp = await s.get(Employee, 1)
+        emp.recruiter_id, emp.manager_id = recruiter.id, manager.id
+        await s.commit()
+        job_id = await s.scalar(select(Job.id).where(Job.kind == "handoff"))
+    notify = AsyncMock(return_value=True)
+    monkeypatch.setattr(channels, "notify_staff", notify)
+    monkeypatch.setattr(channels, "post_hr_chat", AsyncMock(return_value="hr-card"))
+    monkeypatch.setattr(
+        escalation,
+        "_handoff",
+        AsyncMock(
+            return_value=escalation.Handoff(
+                summary="Обязательный шаг не завершён",
+                suggested_action="Связаться с сотрудником",
+            )
+        ),
+    )
+    assert await scheduler.run_job(job_id)
+    notify.assert_awaited_once()
+    assert notify.await_args.args[0].role == "recruiter"
+
+
+@pytest.mark.asyncio
+async def test_downtime_skips_stale_reminders_and_concurrent_escalation_is_unique(db):
+    jobs = await start_required(db)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        waiting = dict(emp.state["required_step"])
+        waiting["started_at"] = (scheduler.utcnow() - timedelta(days=4)).isoformat()
+        emp.state = {**emp.state, "required_step": waiting}
+        await s.commit()
+    for job in jobs[:2]:
+        await make_due(db, job)
+        assert await scheduler.run_job(job.id)
+    await make_due(db, jobs[-1])
+    results = await asyncio.gather(scheduler.run_job(jobs[-1].id), scheduler.run_job(jobs[-1].id))
+    assert sum(results) == 1
+    async with db.session() as s:
+        assert (
+            await s.scalar(
+                select(func.count()).select_from(Message).where(Message.text.contains("Напоминаю"))
+            )
+            == 0
+        )
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 1
+
+
+@pytest.mark.asyncio
+async def test_legacy_survey_resume_replaces_existing_reminders(db):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await surveys.start(s, emp, "day3")  # состояние версии без отдельного маркера ожидания
+        await surveys.answer(s, emp, "day3", "docs", "a")
+        old = list(await s.scalars(select(Job)))
+        assert len(old) == 2
+        await scenario.run_step(s, emp, "d3_survey")
+        assert emp.state["survey"]["q"] == 1
+        assert emp.state["required_step"]["key"]
+        assert all(j.status == "cancelled" for j in old)
+        assert await s.scalar(select(func.count()).select_from(Job).where(Job.status == "pending")) == 3

@@ -64,12 +64,18 @@ async def _handoff(s: AsyncSession, emp: Employee, subject: str) -> Handoff:
         return Handoff(summary=subject[:500], suggested_action="Связаться с сотрудником")
 
 
-async def create_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium") -> Ticket:
+async def queue_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium") -> Ticket:
+    """Добавить обращение и подготовку карточки в транзакцию вызывающего обработчика."""
     t = Ticket(employee_id=emp.id, kind=kind, subject=subject, severity=severity, summary="ИИ готовит handoff-карточку…")
     s.add(t)
     await s.flush()
     # Без employee_id: подготовка резюме не должна удерживать блокировку диалога новичка.
     s.add(Job(kind="handoff", ref=str(t.id), run_at=datetime.now(ZoneInfo("UTC"))))
+    return t
+
+
+async def create_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium") -> Ticket:
+    t = await queue_ticket(s, emp, kind, subject, severity)
     await s.commit()
     hub.publish(ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name})
     return t
