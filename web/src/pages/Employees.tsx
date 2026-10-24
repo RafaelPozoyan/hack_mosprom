@@ -14,14 +14,18 @@ import {
   Modal,
   Progress,
   inputCls,
+  plural,
   siteName,
   timeAgo,
 } from '../components/ui'
 
+const startsIn = (days: number) =>
+  days === 1 ? 'выходит завтра' : `выходит через ${days} ${plural(days, 'день', 'дня', 'дней')}`
+
 export function StageCell({ e }: { e: Pick<Employee, 'status' | 'start_date' | 'probation_end'> }) {
   const { day, total } = probationDay(e)
-  if (e.status === 'invited') return <span className="text-sm text-ink/50">ждём запуска бота по QR</span>
-  if (day < 1) return <span className="text-sm text-ink/60">выход через {1 - day} дн.</span>
+  if (e.status === 'invited') return <span className="text-sm text-ink/50">приглашение ещё не открыто</span>
+  if (day < 1) return <span className="text-sm text-ink/60">{startsIn(1 - day)}</span>
   return (
     <div className="w-40">
       <div className="mb-1 text-xs text-ink/55">
@@ -81,9 +85,9 @@ export default function Employees() {
               <tr className="border-b border-ink/[0.07]">
                 <th className="py-2.5 font-medium">Сотрудник</th>
                 <th className="font-medium">Площадка</th>
-                <th className="font-medium">Выход</th>
-                <th className="font-medium">Прогресс</th>
-                <th className="font-medium" />
+                <th className="font-medium">Первый день</th>
+                <th className="font-medium">Где сейчас</th>
+                <th className="text-right font-medium">Статус</th>
               </tr>
             </thead>
             <tbody>
@@ -291,7 +295,7 @@ export function InviteModal({ e, onClose }: { e: Employee; onClose: () => void }
   const [copied, setCopied] = useState(false)
   const qr = withToken(`/api/employees/${e.id}/qr.svg`)
   return (
-    <Modal open onClose={onClose} title={`Приглашение для ${e.first_name}`}>
+    <Modal open onClose={onClose} title={`Приглашение: ${e.full_name}`}>
       <div className="flex flex-col items-center gap-4 text-center">
         <img src={qr} alt="QR-код" className="size-52 rounded-2xl border border-ink/10 p-2" />
         <p className="max-w-sm text-sm text-ink/60">
