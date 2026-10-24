@@ -1,17 +1,101 @@
 import { useQuery } from '@tanstack/react-query'
-import { BookPlus } from 'lucide-react'
-import { Link } from 'react-router'
+import { ArrowRight, BookPlus } from 'lucide-react'
+import { Link, useNavigate } from 'react-router'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, fmtDate, type Dashboard as D } from '../api'
-import { FirstReplyStat, WaitingTickets } from '../components/ResponseTime'
-import SupportToday from '../components/SupportToday'
-import { Badge, Card, Empty, Stat, plural } from '../components/ui'
+import { api, fmtDate, type Dashboard as D, type Employee } from '../api'
+import {
+  FirstReplyStat,
+  WaitingTickets,
+  firstInLine,
+  unanswered,
+  useOpenTickets,
+} from '../components/ResponseTime'
+import SupportToday, { useSupportToday } from '../components/SupportToday'
+import { Badge, Btn, Card, Empty, Stat, plural } from '../components/ui'
+
+const DAY = 86_400_000
+const WEEKDAY = [
+  'в воскресенье',
+  'в понедельник',
+  'во вторник',
+  'в среду',
+  'в четверг',
+  'в пятницу',
+  'в субботу',
+]
 
 const pct = (v: number | null) => (v === null ? '—' : `${v}%`)
 
 function greeting() {
   const h = Number(new Date().toLocaleString('ru-RU', { hour: 'numeric', timeZone: 'Europe/Moscow' }))
   return h < 6 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'
+}
+
+/** Ближайший выход новичков на неделе вперёд: «1 новичок выходит завтра». Дальше недели день недели неоднозначен. */
+function firstDay(emps: Employee[]) {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' })
+  const dates = emps.filter((e) => e.status !== 'finished' && e.start_date >= today).map((e) => e.start_date)
+  const date = dates.sort()[0]
+  const days = date ? (Date.parse(date) - Date.parse(today)) / DAY : Infinity
+  if (days > 6) return null
+  const n = dates.filter((d) => d === date).length
+  const when = days === 0 ? 'сегодня' : days === 1 ? 'завтра' : WEEKDAY[new Date(date).getUTCDay()]
+  return `${n} ${plural(n, 'новичок выходит', 'новичка выходят', 'новичков выходят')} ${when}`
+}
+
+/** Фраза-итог дня и одно главное действие. */
+function Summary() {
+  const navigate = useNavigate()
+  const tickets = useOpenTickets().data
+  const support = useSupportToday().data
+  const { data: emps } = useQuery({
+    queryKey: ['employees'],
+    queryFn: () => api.get<Employee[]>('/api/employees'),
+  })
+  const waiting = (tickets && unanswered(tickets)) ?? []
+  const n = waiting.length
+  const parts = [
+    n > 0 && `${n} ${plural(n, 'обращение ждёт', 'обращения ждут', 'обращений ждут')} ответа`,
+    support?.length &&
+      `${support.length} ${plural(support.length, 'новичку', 'новичкам', 'новичкам')} нужна поддержка`,
+    emps && firstDay(emps),
+  ].filter((p): p is string => !!p)
+  const loaded = tickets && support && emps
+
+  const today = new Date().toLocaleDateString('ru-RU', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'Europe/Moscow',
+  })
+
+  let action: { label: string; to: string } | null = null
+  if (n)
+    action = {
+      label: n === 1 ? 'Ответить на обращение' : 'Ответить на обращения',
+      to: `/tickets?id=${firstInLine(waiting)!.id}`,
+    }
+  else if (support?.length)
+    action = { label: 'Открыть карточку новичка', to: `/employees/${support[0].employee_id}` }
+
+  return (
+    <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
+      <div>
+        <p className="text-sm text-ink/50 first-letter:uppercase">{today}</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight">{greeting()}!</h1>
+        <p className="mt-2 text-[17px] text-ink/80">
+          {parts.length
+            ? parts.join(' · ')
+            : loaded && 'Всё спокойно: новых обращений и тревожных ответов нет'}
+        </p>
+      </div>
+      {action && (
+        <Btn onClick={() => navigate(action.to)}>
+          {action.label} <ArrowRight size={16} />
+        </Btn>
+      )}
+    </div>
+  )
 }
 
 export default function Dashboard() {
@@ -22,19 +106,10 @@ export default function Dashboard() {
   })
   if (!data) return null
   const k = data.kpi
-  const today = new Date().toLocaleDateString('ru-RU', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    timeZone: 'Europe/Moscow',
-  })
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{greeting()}!</h1>
-        <p className="mt-1 text-sm text-ink/50 first-letter:uppercase">{today}</p>
-      </div>
+      <Summary />
 
       <WaitingTickets />
 
