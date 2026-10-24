@@ -210,10 +210,13 @@ async def employee_card(emp_id: int, s: AsyncSession = Depends(get_session)):
     for j in sorted(jobs, key=lambda j: j.id):
         job_by_step[j.ref] = j
     sent_steps = set(await s.scalars(select(Message.step_id).where(Message.employee_id == emp_id, Message.step_id.is_not(None))))
+    waiting = progress.required_step(e)
     tl = []
     for st, run_at in timeline(e):
         j = job_by_step.get(st["id"])
         status = "sent" if st["id"] in sent_steps else (j.status if j else ("manual" if st.get("manual") else "skipped"))
+        if st["id"] == waiting:
+            status = "waiting"
         first = (st.get("messages") or [{}])[0]
         tl.append({"step_id": st["id"], "title": st.get("title", st["id"]), "phase": phase_of(st.get("at")),
                    "run_at": run_at.isoformat() if run_at else None,

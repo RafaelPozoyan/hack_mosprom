@@ -83,12 +83,31 @@ export type Meta = {
 
 const token = () => localStorage.getItem('korsik_token') ?? ''
 
+export class ApiError extends Error {
+  readonly status: number
+  readonly detail: string | null
+
+  constructor(status: number, body: string) {
+    super(`${status}: ${body}`)
+    this.status = status
+    this.detail = null
+    try {
+      const data: unknown = JSON.parse(body)
+      if (data && typeof data === 'object' && 'detail' in data && typeof data.detail === 'string') {
+        this.detail = data.detail
+      }
+    } catch {
+      // Прокси может вернуть HTML вместо JSON; в интерфейсе остаётся запасной текст.
+    }
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string>) }
   if (token()) headers.Authorization = `Bearer ${token()}`
   if (init?.body && !(init.body instanceof FormData)) headers['Content-Type'] = 'application/json'
   const r = await fetch(path, { ...init, headers })
-  if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`)
+  if (!r.ok) throw new ApiError(r.status, await r.text())
   return r.json()
 }
 

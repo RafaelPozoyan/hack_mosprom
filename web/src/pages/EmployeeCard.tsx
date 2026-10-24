@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { BellRing, CheckCircle2, Clock, Hand, MinusCircle, Play, QrCode, Upload } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
-import { PHASES, api, fmtDateTime, probationDay, type EmployeeCardData, type TimelineStep } from '../api'
+import { ApiError, PHASES, api, fmtDateTime, probationDay, type EmployeeCardData, type TimelineStep } from '../api'
 import ChatPhone from '../components/ChatPhone'
 import { Avatar, Badge, Btn, Card, Empty, Progress, SENTIMENT, SEVERITY, TICKET_KIND, Tabs, siteName, timeAgo, useDemo } from '../components/ui'
 import { InviteModal } from './Employees'
@@ -96,6 +96,8 @@ const STATUS: Record<string, { label: string; icon: typeof Clock; cls: string }>
   done: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
   pending: { label: 'запланировано', icon: Clock, cls: 'text-ink/35' },
   running: { label: 'отправляется', icon: Clock, cls: 'text-sky' },
+  waiting: { label: 'ждём обязательный ответ', icon: Clock, cls: 'text-amber-600' },
+  blocked: { label: 'после обязательного ответа', icon: Clock, cls: 'text-amber-600' },
   manual: { label: 'по вашей команде', icon: Hand, cls: 'text-amber-600' },
   failed: { label: 'не удалось отправить', icon: MinusCircle, cls: 'text-rose-500' },
   skipped: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
@@ -104,8 +106,17 @@ const STATUS: Record<string, { label: string; icon: typeof Clock; cls: string }>
 
 function Journey({ steps, empId, onDone }: { steps: TimelineStep[]; empId: number; onDone: () => void }) {
   const groups = PHASES.map((p) => ({ phase: p, items: steps.filter((s) => s.phase === p) })).filter((g) => g.items.length)
+  const waiting = steps.find((s) => s.status === 'waiting')
   return (
     <div className="flex flex-col gap-4">
+      {waiting && (
+        <Card title="Ждём обязательный ответ">
+          <p className="text-sm text-ink/70">
+            На шаг «{waiting.title}» пока нет полного ответа. Следующие опросы продолжатся после него.
+            Справочная информация и помощь HR остаются доступны.
+          </p>
+        </Card>
+      )}
       {groups.map((g) => (
         <Card key={g.phase} title={g.phase}>
           <ol className="flex flex-col">
@@ -133,12 +144,14 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
       await api.post(`/api/employees/${empId}/steps/${t.step_id}/run`, fd)
       onDone()
     } catch (e) {
-      const message = e instanceof Error ? e.message : ''
-      setError(message.startsWith('409:')
-        ? 'Сейчас выполняются другие отправки. Дождитесь завершения, обновите карточку и повторите при необходимости.'
-        : message.startsWith('503:')
-          ? 'Отправка не завершена. Корсик повторит её автоматически. Обновите карточку позже.'
-          : 'Не удалось подтвердить отправку. Обновите карточку и проверьте сообщения перед повтором.')
+      if (e instanceof ApiError && e.status === 409) {
+        setError(e.detail ?? 'Шаг сейчас недоступен. Обновите карточку и проверьте его состояние.')
+        onDone()
+      } else if (e instanceof ApiError && e.status === 503) {
+        setError('Отправка не завершена. Корсик повторит её автоматически. Обновите карточку позже.')
+      } else {
+        setError('Не удалось подтвердить отправку. Обновите карточку и проверьте сообщения перед повтором.')
+      }
     } finally {
       setBusy(false)
       if (file.current) file.current.value = ''
@@ -155,6 +168,9 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
           {t.audience === 'recruiter' && <Badge tone="blue">рекрутеру</Badge>}
         </div>
         <div className="mt-0.5 line-clamp-1 text-xs text-ink/45">{t.preview}</div>
+        {(t.status === 'waiting' || t.status === 'blocked') && (
+          <div className="mt-1 text-xs text-amber-700">{st.label}</div>
+        )}
         {error && <div role="alert" className="mt-2 text-sm text-rose-600">{error}</div>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
@@ -171,7 +187,9 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
           </>
         )}
         {demo && !t.manual && !sent && (
-          <Btn small demo onClick={() => run()} disabled={busy}><Play size={12} /> сейчас</Btn>
+          <Btn small demo onClick={() => run()} disabled={busy}>
+            <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
+          </Btn>
         )}
       </div>
     </li>

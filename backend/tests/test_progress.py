@@ -19,7 +19,7 @@ from app.analytics import sentiment
 from app.api import admin, demo
 from app.bot import dialog, progress, scenario, surveys
 from app.db import Base
-from app.models import Employee, Job, Message, Site, Staff, StepAttachment, SurveyAnswer, Ticket
+from app.models import Analysis, Employee, Job, Message, Site, Staff, StepAttachment, SurveyAnswer, Ticket
 
 
 @pytest_asyncio.fixture
@@ -47,6 +47,7 @@ async def db(monkeypatch):
                         Ticket.__table__,
                         Message.__table__,
                         SurveyAnswer.__table__,
+                        Analysis.__table__,
                     ],
                 )
             )
@@ -111,6 +112,10 @@ async def test_required_access_waits_and_both_answers_release_queue(db, answer):
         original_time = waiting.run_at
         assert waiting.status == "blocked" and waiting.attempts == 0
         assert (await s.get(Job, information)).status == "done"
+        card = await admin.employee_card(1, s)
+        statuses = {item["step_id"]: item["status"] for item in card["timeline"]}
+        assert statuses["d1_access"] == "waiting"
+        assert statuses["w2_check"] == "blocked"
         await dialog.scenario_button(s, emp, f"b:d1_access:0:0:{answer}")
         assert progress.required_step(emp) is None
         # Поздняя противоположная кнопка не меняет уже полученный ответ.
@@ -119,6 +124,10 @@ async def test_required_access_waits_and_both_answers_release_queue(db, answer):
         assert len(replies) == 1 and replies[0].flagged == bool(answer)
         await s.refresh(waiting)
         assert waiting.status == "pending" and waiting.run_at == original_time
+        card = await admin.employee_card(1, s)
+        statuses = {item["step_id"]: item["status"] for item in card["timeline"]}
+        assert statuses["d1_access"] == "sent"
+        assert statuses["w2_check"] == "pending"
     assert await scheduler.run_job(later)
     async with db.session() as s:
         emp = await s.get(Employee, 1)
