@@ -741,3 +741,87 @@ async def test_multi_choice_rejects_old_generation_and_resume_keeps_current(db):
         assert emp.state["survey"]["selected"] == []
         await dialog.on_callback(s, emp, channels.InEvent("callback", payload=current))
         assert len(emp.state["survey"]["selected"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_before_qr_rejects_file_then_sends_after_start(db, monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setattr(settings(), "media_dir", tmp_path)
+    upload = SimpleNamespace(filename="plan.txt", read=AsyncMock(return_value=b"demo plan"))
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.status = "invited"
+        await s.commit()
+        with pytest.raises(HTTPException) as exc:
+            await admin.run_step_now(1, "d3_plan", upload, s)
+        assert exc.value.status_code == 409 and "QR" in exc.value.detail
+        upload.read.assert_not_awaited()
+        assert not list(tmp_path.iterdir())
+        assert not list(await s.scalars(select(Job)))
+        assert not list(await s.scalars(select(Message)))
+        card = await admin.employee_card(1, s)
+        welcome = next(item for item in card["timeline"] if item["step_id"] == "welcome")
+        assert welcome["status"] == "await_start"
+        await dialog.on_start(s, emp)
+        await admin.run_step_now(1, "d3_plan", upload, s)
+        upload.read.assert_awaited_once()
+        attachment = await s.scalar(select(StepAttachment))
+        assert (tmp_path / attachment.file).read_bytes() == b"demo plan"
+        assert (await s.get(Job, attachment.job_id)).status == "done"
+        assert await s.scalar(select(Message.id).where(Message.step_id == "d3_plan"))
+
+
+@pytest.mark.asyncio
+async def test_due_steps_wait_for_qr_without_retries_and_resume_after_start(db):
+    manager, access, lunch = await old_queue(db, "mgr_day_before", "d1_access", "d1_lunch")
+    async with db.session() as s:
+        (await s.get(Employee, 1)).status = "invited"
+        await s.commit()
+    for job in (manager, access, lunch):
+        assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        assert (await s.get(Job, manager.id)).status == "done"
+        assert not list(await s.scalars(select(Message).where(Message.author == "bot")))
+        for job in (access, lunch):
+            current = await s.get(Job, job.id)
+            assert current.status == "await_start" and current.attempts == 0
+            assert current.run_at == job.run_at and current.done_at is None
+        card = await admin.employee_card(1, s)
+        item = next(item for item in card["timeline"] if item["step_id"] == "d1_access")
+        assert item["status"] == "await_start" and "QR" in item["status_note"]
+    assert not await scheduler.run_job(access.id)
+    # Новая сессия имитирует восстановление после перезапуска приложения.
+    async with db.session() as s:
+        await dialog.on_start(s, await s.get(Employee, 1))
+    for job in (access, lunch):
+        assert await scheduler.run_job(job.id)
+    async with db.session() as s:
+        for job in (access, lunch):
+            current = await s.get(Job, job.id)
+            assert current.status == "done" and current.run_at == job.run_at
+            assert current.attempts == 1
+        assert progress.required_step(await s.get(Employee, 1)) == "d1_access"
+        assert await s.scalar(select(Message.id).where(Message.step_id == "d1_lunch"))
+
+
+@pytest.mark.asyncio
+async def test_demo_waits_for_qr_and_start_does_not_duplicate_future_job(db):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.status = "invited"
+        planned = {st["id"]: at for st, at in scenario.timeline(emp)}["d1_access"]
+        job = Job(employee_id=1, kind="step", ref="d1_access", run_at=planned)
+        s.add(job)
+        await s.commit()
+        result = await demo.run_next(1, s)
+        assert result["status"] == "await_start"
+        assert not list(await s.scalars(select(Message)))
+        await scenario.schedule_employee(s, emp)
+        await s.refresh(job)
+        assert job.status == "await_start"
+        await dialog.on_start(s, emp)
+        await s.refresh(job)
+        assert job.status == "pending" and job.run_at == planned
+        jobs = list(await s.scalars(select(Job).where(Job.ref == "d1_access", Job.kind == "step")))
+        assert len(jobs) == 1
