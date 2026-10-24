@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://korsik:korsik@localhost:55433/korsik"
     admin_token: str = ""  # пусто — админка без авторизации (только для локального демо)
+    hr_api_key: str = ""  # ключ API кадровой системы (/api/hr-system); пусто — API выключен
     public_base_url: str = "http://localhost:8000"
 
     # MAX Bot API (https://dev.max.ru/docs-api). Без токена работает только демо-канал в веб-админке.
@@ -22,6 +23,12 @@ class Settings(BaseSettings):
     max_webhook_secret: str = ""
     max_hr_chat_id: int | None = None  # групповой чат HR, куда бот публикует эскалации
     max_ca_bundle: str = ""  # путь к сертификату Минцифры, если он не в системном хранилище
+
+    # Демо-доступ «попробуйте сами»: диплинк https://max.ru/<bot>?start=<payload> заводит демо-новичка на каждого
+    # пользователя MAX. Пусто — выключено: в проде новички приходят только из панели и кадровой системы.
+    demo_try_payload: str = ""
+    demo_try_site: str = "GTP"  # завод — та же площадка, что в демо-сценарии README
+    demo_try_limit: int = 200  # запас на жюри и зрителей защиты; дальше QR вежливо отказывает
 
     # LLM — любой OpenAI-совместимый endpoint: llama.cpp/vLLM (GigaChat 3.1 Lightning), Yandex AI Studio, GigaChat
     llm_base_url: str = "http://localhost:8081/v1"

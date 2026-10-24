@@ -6,16 +6,17 @@ import re
 from collections import defaultdict
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
-from app.bot import dialog, escalation
+from app.bot import demo_try, dialog, escalation
 from app.channels import InEvent, OutMessage
 from app.channels.max import max_client
 from app.config import settings
-from app.db import session
+from app.db import after_commit, session
 from app.models import Employee, Staff, Ticket
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,14 @@ class EventContext:
         if employee_id not in self.employees:
             await self.locks.enter_async_context(_locks[employee_id])
             self.employees.add(employee_id)
+
+
+def _after_event(context: EventContext | None, callback, *args) -> None:
+    """Демо-доступ работает своими сессиями: запускаем его после фиксации входящего события."""
+    if context:
+        after_commit(context.session, callback, *args)
+    else:
+        callback(*args)
 
 
 UNKNOWN_USER = (
@@ -96,7 +105,9 @@ async def process_max_update(
             except Exception:
                 log.warning("answer_callback failed", exc_info=True)
             emp_id = await _employee_by_user(cb["user"]["user_id"], context=context)
-            if emp_id:
+            if emp_id and cb.get("payload") == demo_try.NEXT:
+                _after_event(context, demo_try.start_advance, emp_id)
+            elif emp_id:
                 msg = upd.get("message") or {}
                 await handle_employee_event(
                     emp_id,
@@ -110,6 +121,7 @@ async def process_max_update(
                     raise_errors=raise_errors,
                     context=context,
                 )
+                _after_event(context, demo_try.schedule_after_event, emp_id)
         elif kind == "message_created":
             msg = upd["message"]
             recipient = msg.get("recipient") or {}
@@ -119,10 +131,13 @@ async def process_max_update(
                 return
             user_id = (msg.get("sender") or {}).get("user_id")
             emp_id = await _employee_by_user(user_id, context=context)
-            if emp_id:
+            if emp_id and text.lower() in demo_try.NEXT_TEXTS and await demo_try.is_demo(emp_id):
+                _after_event(context, demo_try.start_advance, emp_id)
+            elif emp_id:
                 await handle_employee_event(
                     emp_id, InEvent("text", text=text), raise_errors=raise_errors, context=context
                 )
+                _after_event(context, demo_try.schedule_after_event, emp_id)
             elif user_id:
                 await client.send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
     except Exception:
@@ -142,6 +157,16 @@ async def _on_started(
     user: dict, payload: str, *, raise_errors: bool = False, context: EventContext | None = None
 ) -> None:
     user_id = user["user_id"]
+    if demo_try.is_try(payload):
+        emp_id = await demo_try.enroll(user)
+        if emp_id is None:
+            await max_client().send(OutMessage(text=demo_try.FULL), user_id=user_id)
+            return
+        await handle_employee_event(
+            emp_id, InEvent("start", payload=payload), raise_errors=raise_errors, context=context
+        )
+        _after_event(context, demo_try.schedule_hint, emp_id, True)
+        return
     async with nullcontext(context.session) if context else session() as s:
         if payload.startswith("staff_"):
             staff = await s.scalar(select(Staff).where(Staff.invite_code == payload[6:]))
@@ -218,13 +243,27 @@ async def _on_hr_chat(msg: dict, text: str, *, context: EventContext | None = No
                 await channels.post_hr_chat(OutMessage(text=f"Обращение #{t.id}: {e}"))
 
 
+def _marker_file() -> Path:
+    return settings().data_dir / "max_poll_marker"
+
+
+def _load_marker() -> int | None:
+    try:
+        return int(_marker_file().read_text())
+    except (OSError, ValueError):
+        return None
+
+
 async def poll_loop() -> None:
-    """Long polling — для разработки без публичного HTTPS (в проде MAX рекомендует только webhook)."""
+    """Long polling — для разработки без публичного HTTPS (в проде MAX рекомендует только webhook).
+    Позиция чтения хранится в файле: перезапуск не повторяет уже обработанные события (повторное приветствие, ответы)."""
     client = max_client()
-    marker = None
+    marker = _load_marker()
     while True:
         try:
             updates, marker = await client.poll(marker)
+            if marker is not None:
+                _marker_file().write_text(str(marker))
             for upd in updates:
                 asyncio.create_task(process_max_update(upd))
         except Exception:
