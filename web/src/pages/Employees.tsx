@@ -55,9 +55,10 @@ const NOBODY: Record<Filter, string> = {
   new: 'Все новички уже вышли на работу',
 }
 
-// Порядок по срочности: сначала обращение без ответа и высокая тревога, потом остальные тревожные ответы.
-// Одинаково срочные остаются в порядке сервера — по дате выхода, новые сверху.
-const urgency = (e: Employee) => (e.open_ticket ? 2 : 0) + (e.signal ? (e.signal.urgent ? 2 : 1) : 0)
+// Порядок по срочности: сначала высокая тревога, затем обращение без ответа, затем остальные тревожные
+// ответы; веса складываются. Одинаково срочные остаются в порядке сервера — по дате выхода, новые сверху.
+// Среди ещё не вышедших выше тот, кто выходит раньше.
+const urgency = (e: Employee) => (e.signal ? (e.signal.urgent ? 4 : 1) : 0) + (e.open_ticket ? 2 : 0)
 
 export default function Employees() {
   const qc = useQueryClient()
@@ -76,7 +77,9 @@ export default function Employees() {
     .filter(
       (e) => FILTERS[filter](e) && `${e.full_name} ${e.position}`.toLowerCase().includes(q.toLowerCase()),
     )
-    .sort((a, b) => urgency(b) - urgency(a))
+    .sort(
+      (a, b) => urgency(b) - urgency(a) || (filter === 'new' ? a.start_date.localeCompare(b.start_date) : 0),
+    )
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
