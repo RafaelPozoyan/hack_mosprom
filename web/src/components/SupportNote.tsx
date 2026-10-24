@@ -6,16 +6,22 @@ import { ApiError, api, type EmployeeSupport } from '../api'
 import { Reason } from './SupportToday'
 import { Btn, Modal } from './ui'
 
-type Props = { empId: number; name: string; onSent: () => void }
+/** quiet — на экране уже есть главное действие («Нужно ваше действие»), кнопка здесь с ним не спорит. */
+type Props = { empId: number; name: string; onSent: () => void; quiet?: boolean }
 
-/** Тревожные сигналы новичка в шапке карточки и одно действие — подключить руководителя.
- *  Можно ли подключить, решает сервер; здесь причина отказа видна заранее. */
-export default function SupportNote({ empId, name, onSent }: Props) {
-  const { data } = useQuery({
+/** Причины тревоги новичка за месяц и можно ли подключить руководителя. Тот же ответ сервера читает вкладка
+ *  «Что беспокоит» — срочность причин там такая же, как в шапке. */
+export const useSupport = (empId: number) =>
+  useQuery({
     queryKey: ['employee-support', empId],
     queryFn: () => api.get<EmployeeSupport>(`/api/employees/${empId}/support`),
     refetchInterval: 15_000,
   })
+
+/** Тревожные сигналы новичка в шапке карточки и одно действие — подключить руководителя.
+ *  Можно ли подключить, решает сервер; здесь причина отказа видна заранее. */
+export default function SupportNote({ empId, name, onSent, quiet }: Props) {
+  const { data } = useSupport(empId)
   const [open, setOpen] = useState(false)
   const [delivered, setDelivered] = useState<boolean | null>(null)
   if (!data?.reasons.length) return null
@@ -43,7 +49,7 @@ export default function SupportNote({ empId, name, onSent }: Props) {
       </div>
       <div className="flex flex-col items-end gap-1">
         <Btn
-          variant={data.today ? 'primary' : 'ghost'}
+          variant={data.today && !quiet ? 'primary' : 'ghost'}
           disabled={!!data.refusal}
           onClick={() => setOpen(true)}
         >

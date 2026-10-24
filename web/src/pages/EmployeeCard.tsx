@@ -1,19 +1,43 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { BellRing, CheckCircle2, Clock, Hand, MinusCircle, Play, QrCode, Upload } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import {
+  BellRing,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Copy,
+  Download,
+  Ellipsis,
+  FileText,
+  Hand,
+  MessageCircleReply,
+  MinusCircle,
+  Play,
+  QrCode,
+  Upload,
+} from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useNavigate, useParams } from 'react-router'
 import {
   ApiError,
   PHASES,
   api,
+  fmtDate,
   fmtDateTime,
   probationDay,
+  withToken,
+  type AnalysisItem,
+  type Employee,
   type EmployeeCardData,
+  type Meta,
+  type Notification,
+  type SupportReason,
+  type Ticket,
   type TimelineStep,
 } from '../api'
 import ChatPhone from '../components/ChatPhone'
-import SupportNote from '../components/SupportNote'
+import SupportNote, { useSupport } from '../components/SupportNote'
 import TeamPicker from '../components/TeamPicker'
 import {
   Avatar,
@@ -22,10 +46,9 @@ import {
   Card,
   Empty,
   Progress,
-  SENTIMENT,
-  SEVERITY,
   TICKET_KIND,
   Tabs,
+  plural,
   siteName,
   timeAgo,
   useDemo,
@@ -40,50 +63,56 @@ export default function EmployeeCard() {
   const demo = useDemo()
   const [tab, setTab] = useState<Tab>('journey')
   const [invite, setInvite] = useState(false)
-  const { data } = useQuery({
+  const { data, error, refetch, isFetching } = useQuery({
     queryKey: ['employee', id],
     queryFn: () => api.get<EmployeeCardData>(`/api/employees/${id}`),
     refetchInterval: 10_000,
   })
+  const { data: support } = useSupport(Number(id))
   const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['employee', id] }), [qc, id])
-  if (!data) return null
+  if (!data) return error ? <LoadError error={error} retry={() => refetch()} busy={isFetching} /> : null
   const e = data.employee
   const { day, total } = probationDay(e)
-  const concerns =
-    data.analyses.filter((a) => a.severity !== 'low').length +
-    data.surveys.flatMap((g) => g.items).filter((i) => i.flag).length
-  const openTickets = data.tickets.filter((t) => t.status === 'open').length
+  const concerns = concernsOf(data, support?.reasons ?? [])
+  const tasks = todo(data)
 
   return (
     <div className={clsx('mx-auto flex gap-6', demo ? 'max-w-[1500px]' : 'max-w-5xl')}>
       <div className="flex min-w-0 flex-1 flex-col gap-5">
         <Card>
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-4">
             <Avatar name={e.full_name} size={56} />
             <div className="min-w-0 flex-1">
               <h1 className="text-xl font-semibold tracking-tight">{e.full_name}</h1>
               <div className="text-sm text-ink/55">
                 {e.position || 'Должность не указана'} · {siteName(e.site_code)}
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {e.address_form && <Badge>общается на «{e.address_form === 'vy' ? 'вы' : 'ты'}»</Badge>}
-                {e.in_dialog_with_hr && <Badge tone="blue">сейчас в диалоге с HR</Badge>}
+              <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-ink/55">
                 <TeamPicker e={e} onDone={refresh} />
+                {e.address_form && (
+                  <span title="Как Корсик обращается к новичку — новичок выбрал сам">
+                    · на «{e.address_form === 'vy' ? 'вы' : 'ты'}»
+                  </span>
+                )}
+                {e.in_dialog_with_hr && <Badge tone="blue">сейчас в диалоге с HR</Badge>}
               </div>
             </div>
-            <Btn variant="ghost" onClick={() => setInvite(true)}>
-              <QrCode size={16} /> QR-приглашение
-            </Btn>
+            {/* у приглашённого QR-код — в блоке «Нужно ваше действие»; остальным он нужен редко */}
+            {e.status !== 'invited' && <MoreMenu onInvite={() => setInvite(true)} />}
           </div>
-          <SupportNote empId={e.id} name={e.full_name} onSent={refresh} />
+          <SupportNote
+            empId={e.id}
+            name={e.full_name}
+            onSent={refresh}
+            quiet={tasks.tickets.length + tasks.steps.length > 0 || tasks.invite}
+          />
           <div className="mt-5">
-            {e.status === 'invited' ? (
-              <div className="rounded-xl bg-sky-50 px-4 py-3 text-sm text-sky-900">
-                Ждём, когда {e.first_name} отсканирует QR-код из оффера и запустит Корсика в MAX.
-              </div>
-            ) : day < 1 ? (
+            {day < 1 ? (
               <div className="text-sm text-ink/60">
-                До выхода на работу: {1 - day} дн. Корсик уже на связи и помогает подготовиться.
+                {1 - day === 1
+                  ? 'Выходит на работу завтра.'
+                  : `Выходит на работу через ${1 - day} ${plural(1 - day, 'день', 'дня', 'дней')}.`}
+                {e.status !== 'invited' && ' Корсик уже на связи и помогает подготовиться.'}
               </div>
             ) : (
               <>
@@ -99,20 +128,24 @@ export default function EmployeeCard() {
           </div>
         </Card>
 
+        <Actions e={e} {...tasks} onDone={refresh} />
+
         <Tabs
           value={tab}
           onChange={setTab}
           items={[
             { id: 'journey', label: 'Путь адаптации' },
             { id: 'surveys', label: 'Опросы' },
-            { id: 'signals', label: 'Сигналы', count: concerns },
-            { id: 'tickets', label: 'Обращения', count: openTickets },
+            { id: 'signals', label: 'Что беспокоит', count: concerns.items.length },
+            { id: 'tickets', label: 'Обращения', count: tasks.tickets.length },
           ]}
         />
 
-        {tab === 'journey' && <Journey steps={data.timeline} empId={e.id} onDone={refresh} />}
+        {tab === 'journey' && (
+          <Journey steps={data.timeline} empId={e.id} active={e.status === 'active'} onDone={refresh} />
+        )}
         {tab === 'surveys' && <Surveys data={data} />}
-        {tab === 'signals' && <Signals data={data} />}
+        {tab === 'signals' && <Signals data={data} {...concerns} />}
         {tab === 'tickets' && <TicketsTab data={data} />}
       </div>
 
@@ -131,60 +164,258 @@ export default function EmployeeCard() {
   )
 }
 
-// --- путь адаптации ----------------------------------------------------------------------------------
-
-const STATUS: Record<string, { label: string; icon: typeof Clock; cls: string }> = {
-  sent: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
-  done: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
-  pending: { label: 'запланировано', icon: Clock, cls: 'text-ink/35' },
-  running: { label: 'отправляется', icon: Clock, cls: 'text-sky' },
-  waiting: { label: 'ждём обязательный ответ', icon: Clock, cls: 'text-amber-600' },
-  await_start: { label: 'ждём запуска бота по QR', icon: Clock, cls: 'text-amber-600' },
-  blocked: { label: 'после обязательного ответа', icon: Clock, cls: 'text-amber-600' },
-  manual: { label: 'по вашей команде', icon: Hand, cls: 'text-amber-600' },
-  failed: { label: 'не удалось отправить', icon: MinusCircle, cls: 'text-rose-500' },
-  skipped: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
-  cancelled: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
+/** Карточка не загрузилась: сотрудника нет (удалили, неверная ссылка) или нет связи с сервером. */
+function LoadError({ error, retry, busy }: { error: Error; retry: () => void; busy: boolean }) {
+  const missing = error instanceof ApiError && [404, 422].includes(error.status)
+  return (
+    <Card className="mx-auto w-full max-w-5xl">
+      {missing ? (
+        <Empty>
+          Такого сотрудника нет — возможно, карточку удалили
+          <Link to="/employees" className="font-medium text-ink/70 hover:text-ink">
+            К списку сотрудников
+          </Link>
+        </Empty>
+      ) : (
+        <Empty>
+          Не удалось загрузить карточку. Проверьте соединение.
+          <Btn small variant="ghost" onClick={retry} disabled={busy}>
+            Повторить
+          </Btn>
+        </Empty>
+      )}
+    </Card>
+  )
 }
 
-function Journey({ steps, empId, onDone }: { steps: TimelineStep[]; empId: number; onDone: () => void }) {
-  const groups = PHASES.map((p) => ({ phase: p, items: steps.filter((s) => s.phase === p) })).filter(
-    (g) => g.items.length,
-  )
-  const waiting = steps.find((s) => s.status === 'waiting')
+/** Редкие действия в шапке: сейчас одно — снова показать QR-код и ссылку-приглашение. */
+function MoreMenu({ onInvite }: { onInvite: () => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const outside = (ev: MouseEvent) => !box.current?.contains(ev.target as Node) && setOpen(false)
+    const esc = (ev: KeyboardEvent) => ev.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', outside)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', outside)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [open])
   return (
-    <div className="flex flex-col gap-4">
-      {waiting && (
-        <Card title="Ждём обязательный ответ">
-          <p className="text-sm text-ink/70">
-            На шаг «{waiting.title}» пока нет полного ответа. Следующие опросы продолжатся после него.
-            Справочная информация и помощь HR остаются доступны.
-          </p>
-        </Card>
+    <div ref={box} className="relative self-start">
+      <button
+        aria-label="Ещё действия"
+        aria-expanded={open}
+        title="Ещё действия"
+        onClick={() => setOpen(!open)}
+        className="grid size-9 place-items-center rounded-xl text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink"
+      >
+        <Ellipsis size={18} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-10 mt-1 w-60 rounded-xl border border-ink/10 bg-white p-1 shadow-lg">
+          <button
+            onClick={() => {
+              setOpen(false)
+              onInvite()
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm hover:bg-ink/[0.04]"
+          >
+            <QrCode size={16} className="text-ink/50" /> QR-приглашение
+          </button>
+        </div>
       )}
-      {groups.map((g) => (
-        <Card key={g.phase} title={g.phase}>
-          <ol className="flex flex-col">
-            {g.items.map((t) => (
-              <Step key={t.step_id} t={t} empId={empId} onDone={onDone} />
-            ))}
-          </ol>
-        </Card>
-      ))}
     </div>
   )
 }
 
-function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: () => void }) {
-  const demo = useDemo()
-  const file = useRef<HTMLInputElement>(null)
+// --- нужно ваше действие -----------------------------------------------------------------------------
+
+/** Плановое время шага ещё не пришло. */
+const early = (t: TimelineStep) => !!t.run_at && Date.parse(t.run_at) > Date.now()
+
+/** Шаг «по вашей команде», время которого пришло: его кнопки — в блоке «Нужно ваше действие», а не в ленте. */
+const awaitsHr = (t: TimelineStep) => t.manual && t.status === 'manual' && !early(t)
+
+/** Тема обращения из опроса приходит как «вопрос → ответ»; HR важнее слова самого новичка. */
+const ownWords = (subject: string) => subject.slice(subject.lastIndexOf('→') + 1).trim() || subject
+
+/** Только то, что HR может сделать сам: ответить на обращение, отправить шаг по команде, пригласить новичка. */
+function todo(data: EmployeeCardData) {
+  const e = data.employee
+  return {
+    tickets: data.tickets.filter((t) => t.status === 'open'),
+    steps: e.status === 'active' ? data.timeline.filter(awaitsHr) : [],
+    invite: e.status === 'invited',
+  }
+}
+
+/** Заметная кнопка — у первой строки, у остальных — спокойные: главное действие на экране одно. */
+function Actions({
+  e,
+  tickets,
+  steps,
+  invite,
+  onDone,
+}: ReturnType<typeof todo> & { e: Employee; onDone: () => void }) {
+  const rows = [
+    ...tickets.map((t) => (main: boolean) => (
+      <TicketAction key={`t${t.id}`} t={t} name={e.first_name} main={main} />
+    )),
+    ...steps.map((t) => (main: boolean) => (
+      <StepAction key={t.step_id} t={t} empId={e.id} onDone={onDone} main={main} />
+    )),
+    ...(invite ? [(main: boolean) => <InviteAction key="invite" e={e} main={main} />] : []),
+  ]
+  if (!rows.length) return null
+  return (
+    <Card title="Нужно ваше действие">
+      <div className="flex flex-col divide-y divide-ink/[0.06]">{rows.map((row, i) => row(i === 0))}</div>
+    </Card>
+  )
+}
+
+function ActionRow({
+  icon,
+  title,
+  children,
+  actions,
+  error,
+}: {
+  icon: ReactNode
+  title: ReactNode
+  children: ReactNode
+  actions: ReactNode
+  error?: string
+}) {
+  return (
+    <div className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+      {icon}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-64">
+          <div className="text-sm font-medium">{title}</div>
+          <div className="mt-0.5 text-sm text-ink/55">{children}</div>
+          {error && (
+            <div role="alert" className="mt-1.5 text-sm text-rose-600">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">{actions}</div>
+      </div>
+    </div>
+  )
+}
+
+const rowIcon = (icon: ReactNode) => (
+  <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700">{icon}</div>
+)
+
+function TicketAction({ t, name, main }: { t: Ticket; name: string; main: boolean }) {
+  const nav = useNavigate()
+  return (
+    <ActionRow
+      icon={rowIcon(<MessageCircleReply size={19} />)}
+      title={`${name} ждёт ответа HR с ${fmtDate(t.created_at)}`}
+      actions={
+        <Btn variant={main ? 'primary' : 'ghost'} onClick={() => nav(`/tickets?id=${t.id}`)}>
+          Ответить
+        </Btn>
+      }
+    >
+      <span className="line-clamp-2">«{ownWords(t.subject)}»</span>
+    </ActionRow>
+  )
+}
+
+function StepAction({
+  t,
+  empId,
+  onDone,
+  main,
+}: {
+  t: TimelineStep
+  empId: number
+  onDone: () => void
+  main: boolean
+}) {
+  const { run, busy, error } = useRunStep(empId, t, onDone)
+  const plan = t.step_id === 'd3_plan'
+  const variant = main ? 'primary' : 'ghost'
+  return (
+    <ActionRow
+      icon={rowIcon(plan ? <FileText size={19} /> : <Hand size={19} />)}
+      title={`${t.title} — ${t.run_at ? `ждёт с ${fmtDate(t.run_at)}` : 'ждёт вашей команды'}`}
+      error={error}
+      actions={
+        plan ? (
+          <>
+            <AttachPlan run={run} busy={busy} variant={variant} />
+            <Btn variant="ghost" onClick={() => run()} disabled={busy}>
+              Отправить без плана
+            </Btn>
+          </>
+        ) : (
+          <Btn variant={variant} onClick={() => run()} disabled={busy}>
+            Отправить
+          </Btn>
+        )
+      }
+    >
+      {plan
+        ? 'Корсик отправит новичку файл от руководителя вместе с сообщением о плане.'
+        : 'Этот шаг Корсик отправляет по вашей команде.'}
+    </ActionRow>
+  )
+}
+
+function InviteAction({ e, main }: { e: Employee; main: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const qr = withToken(`/api/employees/${e.id}/qr.svg`)
+  return (
+    <ActionRow
+      icon={
+        <img
+          src={qr}
+          alt="QR-код приглашения"
+          className="size-28 shrink-0 rounded-xl border border-ink/10 p-1.5"
+        />
+      }
+      title="Приглашение в MAX ещё не открыто"
+      actions={
+        <>
+          {e.invite_link && (
+            <Btn
+              variant={main ? 'primary' : 'ghost'}
+              onClick={() => navigator.clipboard.writeText(e.invite_link!).then(() => setCopied(true))}
+            >
+              {copied ? <Check size={15} /> : <Copy size={15} />}{' '}
+              {copied ? 'Скопировано' : 'Скопировать ссылку'}
+            </Btn>
+          )}
+          <a href={qr} download={`QR ${e.full_name}.svg`}>
+            <Btn variant="ghost">
+              <Download size={15} /> Скачать QR
+            </Btn>
+          </a>
+        </>
+      }
+    >
+      Отправьте ссылку или добавьте QR-код в оффер. Корсик начнёт путь адаптации, как только новичок откроет
+      приглашение.
+    </ActionRow>
+  )
+}
+
+/** Отправить шаг сейчас — по команде HR или перемоткой в демо. Отказы сервера — человеческим языком. */
+function useRunStep(empId: number, t: TimelineStep, onDone: () => void) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
     setError('')
   }, [t.status])
-  const st = STATUS[t.status] ?? STATUS.pending
-  const Icon = st.icon
   const run = async (f?: File) => {
     setBusy(true)
     const fd = new FormData()
@@ -204,24 +435,200 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
       }
     } finally {
       setBusy(false)
-      if (file.current) file.current.value = ''
     }
   }
-  const sent = t.status === 'sent' || t.status === 'done'
-  const obsolete = t.status === 'skipped' && Boolean(t.status_note)
+  return { run, busy, error }
+}
+
+/** «Приложить план»: выбранный файл Корсик отправит новичку вместе с сообщениями шага. */
+function AttachPlan({
+  run,
+  busy,
+  variant,
+  small,
+}: {
+  run: (f: File) => void
+  busy: boolean
+  variant: 'primary' | 'ghost'
+  small?: boolean
+}) {
+  const file = useRef<HTMLInputElement>(null)
   return (
-    <li className="flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
+    <>
+      <input
+        ref={file}
+        type="file"
+        hidden
+        onChange={(ev) => {
+          const f = ev.target.files?.[0]
+          ev.target.value = '' // после ошибки тот же файл можно выбрать снова
+          if (f) run(f)
+        }}
+      />
+      <Btn small={small} variant={variant} onClick={() => file.current?.click()} disabled={busy}>
+        <Upload size={small ? 13 : 15} /> Приложить план
+      </Btn>
+    </>
+  )
+}
+
+// --- путь адаптации ----------------------------------------------------------------------------------
+
+// Значок и подпись статуса шага. Подпись серая, если не сказано иначе; date — показывать ли рядом
+// плановое время (у отправленных и пропущенных шагов оно уже ничего не говорит).
+type StepStatus = { label: string; icon: typeof Clock; cls: string; text?: string; date?: boolean }
+const WAIT = { icon: Clock, cls: 'text-amber-600', text: 'text-amber-700' } // ждём новичка или его ответа
+const STATUS: Record<string, StepStatus> = {
+  sent: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
+  done: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
+  pending: { label: 'запланировано', icon: Clock, cls: 'text-ink/35', date: true },
+  running: { label: 'отправляется', icon: Clock, cls: 'text-sky' },
+  waiting: { label: 'ждём обязательный ответ', ...WAIT },
+  await_start: { label: 'приглашение ещё не открыто', ...WAIT },
+  blocked: { label: 'после обязательного ответа', ...WAIT, date: true },
+  manual: { label: 'по вашей команде', icon: Hand, cls: 'text-amber-600', date: true },
+  failed: {
+    label: 'не удалось отправить',
+    icon: MinusCircle,
+    cls: 'text-rose-500',
+    text: 'text-rose-600',
+    date: true,
+  },
+  skipped: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
+  cancelled: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
+}
+
+/** Шаг уже позади: отправлен или пропущен. Такие шаги свёрнуты, открыты текущий и следующие. */
+const passed = (t: TimelineStep) => ['sent', 'done', 'skipped', 'cancelled'].includes(t.status)
+const skipped = (t: TimelineStep) => t.status === 'skipped' || t.status === 'cancelled'
+
+const byPhase = (steps: TimelineStep[]) =>
+  PHASES.map((p) => ({ phase: p, items: steps.filter((s) => s.phase === p) })).filter((g) => g.items.length)
+
+function Journey({
+  steps,
+  empId,
+  active,
+  onDone,
+}: {
+  steps: TimelineStep[]
+  empId: number
+  active: boolean
+  onDone: () => void
+}) {
+  const done = steps.filter(passed)
+  const missed = done.filter(skipped).length
+  const ahead = byPhase(steps.filter((s) => !passed(s)))
+  const later = ahead.slice(2).flatMap((g) => g.items) // открыты текущий этап и следующий, дальние — свёрнуты
+  const last = later.at(-1)?.run_at
+  const waiting = steps.find((s) => s.status === 'waiting')
+  const step = (t: TimelineStep) => (
+    <Step key={t.step_id} t={t} empId={empId} active={active} onDone={onDone} />
+  )
+  return (
+    <div className="flex flex-col gap-4">
+      {waiting && (
+        <Card title="Ждём обязательный ответ">
+          <p className="text-sm text-ink/70">
+            На шаг «{waiting.title}» пока нет полного ответа. Следующие опросы продолжатся после него.
+            Справочная информация и помощь HR остаются доступны.
+          </p>
+        </Card>
+      )}
+      {done.length > 0 && (
+        <Fold
+          icon={<CheckCircle2 size={18} className="shrink-0 text-lime-2" />}
+          title={`Пройдено ${done.length} из ${steps.length}`}
+          note={missed > 0 && `(${missed} ${plural(missed, 'пропущен', 'пропущено', 'пропущено')})`}
+          steps={done}
+          step={step}
+        />
+      )}
+      {ahead.slice(0, 2).map((g) => (
+        <Card key={g.phase} title={g.phase}>
+          <ol className="flex flex-col">{g.items.map(step)}</ol>
+        </Card>
+      ))}
+      {later.length > 0 && (
+        <Fold
+          icon={<Clock size={18} className="shrink-0 text-ink/35" />}
+          title={`Дальше по плану: ${later.length} ${plural(later.length, 'шаг', 'шага', 'шагов')}`}
+          note={last && `до ${fmtDate(last)}`}
+          steps={later}
+          step={step}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Свёрнутая часть ленты: одна строка-итог, по нажатию — шаги по этапам. */
+function Fold({
+  icon,
+  title,
+  note,
+  steps,
+  step,
+}: {
+  icon: ReactNode
+  title: string
+  note: ReactNode
+  steps: TimelineStep[]
+  step: (t: TimelineStep) => ReactNode
+}) {
+  return (
+    <Card>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-3 text-[15px] font-semibold select-none">
+          {icon}
+          <span>
+            {title} {note && <span className="font-normal text-ink/50">{note}</span>}
+          </span>
+          <ChevronDown size={18} className="ml-auto text-ink/40 transition group-open:rotate-180" />
+        </summary>
+        <div className="mt-4 flex flex-col gap-4">
+          {byPhase(steps).map((g) => (
+            <div key={g.phase}>
+              <h3 className="text-[13px] font-semibold text-ink/50">{g.phase}</h3>
+              <ol className="flex flex-col">{g.items.map(step)}</ol>
+            </div>
+          ))}
+        </div>
+      </details>
+    </Card>
+  )
+}
+
+const ON_HOVER = 'opacity-0 transition group-hover:opacity-100 focus-within:opacity-100'
+
+/** Строка шага. Кнопки, которые сейчас не нужны, видны при наведении: демо-перемотка и отправка шага
+ *  «по вашей команде» раньше срока. Шаг, которого HR ждёт сейчас, отправляют из блока «Нужно ваше действие». */
+function Step({
+  t,
+  empId,
+  active,
+  onDone,
+}: {
+  t: TimelineStep
+  empId: number
+  active: boolean
+  onDone: () => void
+}) {
+  const demo = useDemo()
+  const { run, busy, error } = useRunStep(empId, t, onDone)
+  const st = STATUS[t.status] ?? STATUS.pending
+  const Icon = st.icon
+  const hr = awaitsHr(t)
+  return (
+    <li className="group flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
       <Icon size={18} className={clsx('mt-0.5 shrink-0', st.cls)} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className={clsx('font-medium', sent && 'text-ink/60')}>{t.title}</span>
+          <span className={clsx('font-medium', passed(t) && 'text-ink/60')}>{t.title}</span>
           {t.audience === 'manager' && <Badge tone="blue">руководителю</Badge>}
           {t.audience === 'recruiter' && <Badge tone="blue">рекрутеру</Badge>}
         </div>
         <div className="mt-0.5 line-clamp-1 text-xs text-ink/45">{t.preview}</div>
-        {t.run_at && ['waiting', 'blocked', 'await_start'].includes(t.status) && (
-          <div className="mt-1 text-xs text-amber-700">{st.label}</div>
-        )}
         {t.status_note && <div className="mt-1 text-xs text-ink/60">{t.status_note}</div>}
         {error && (
           <div role="alert" className="mt-2 text-sm text-rose-600">
@@ -229,33 +636,30 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="text-xs text-ink/45">{t.run_at ? fmtDateTime(t.run_at) : st.label}</span>
-        {t.manual && !sent && !obsolete && (
-          <>
-            {t.step_id === 'd3_plan' && (
-              <>
-                <input
-                  ref={file}
-                  type="file"
-                  hidden
-                  onChange={(e) => e.target.files?.[0] && run(e.target.files[0])}
-                />
-                <Btn small variant="ghost" onClick={() => file.current?.click()} disabled={busy}>
-                  <Upload size={13} /> Приложить план
-                </Btn>
-              </>
-            )}
+      <div className="flex shrink-0 items-center gap-3">
+        {active && t.manual && !passed(t) && !hr && (
+          <span className={clsx('flex gap-2', early(t) && ON_HOVER)}>
+            {t.step_id === 'd3_plan' && <AttachPlan small run={run} busy={busy} variant="ghost" />}
             <Btn small onClick={() => run()} disabled={busy}>
               Отправить
             </Btn>
-          </>
+          </span>
         )}
-        {demo && !t.manual && !sent && !obsolete && (
-          <Btn small demo onClick={() => run()} disabled={busy}>
-            <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
-          </Btn>
+        {demo && !t.manual && !passed(t) && (
+          <span className={ON_HOVER}>
+            <Btn small demo onClick={() => run()} disabled={busy}>
+              <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
+            </Btn>
+          </span>
         )}
+        <div className="text-right text-xs">
+          <div className={hr ? WAIT.text : (st.text ?? 'text-ink/50')}>
+            {hr ? 'ждёт вашей команды' : st.label}
+          </div>
+          {st.date && t.run_at && (
+            <div className="mt-0.5 text-ink/40 tabular-nums">{fmtDateTime(t.run_at)}</div>
+          )}
+        </div>
       </div>
     </li>
   )
@@ -297,76 +701,169 @@ function Surveys({ data }: { data: EmployeeCardData }) {
   )
 }
 
-function Signals({ data }: { data: EmployeeCardData }) {
-  const items = [...data.analyses].sort(
-    (a, b) => Number(b.severity === 'high') - Number(a.severity === 'high'),
+/** Тревожный сигнал: ответ в опросе с флагом или сообщение, которое Корсик при разборе счёл тревожным.
+ *  Те же сигналы, что сервер показывает в шапке карточки и в списке сотрудников (metrics.risk_signals). */
+type Concern = {
+  flags: string[]
+  question?: string
+  text: string
+  summary?: string
+  urgent: boolean
+  source: string
+  at: string
+}
+
+/** Срочные первыми, затем свежие. Срочность — как в шапке карточки: высокая важность при разборе или причина,
+ *  которую сервер пометил срочной (политика analytics.high в сценарии). Ответ опроса, который Корсик разобрал как
+ *  тревожный, показываем один раз — разбором с выводом; спокойные разборы уходят под «Ещё N спокойных». */
+function concernsOf(data: EmployeeCardData, reasons: SupportReason[]) {
+  const urgent = new Set(reasons.filter((r) => r.urgent).map((r) => r.reason))
+  const tense = data.analyses.filter((a) => a.severity !== 'low')
+  const covered = new Set(tense.map((a) => a.text))
+  const answers = data.surveys.flatMap((g) =>
+    g.items
+      .filter((i) => i.flag && !(i.comment && covered.has(i.comment)))
+      .map((i) => ({
+        flags: [i.flag!],
+        question: i.question.replace(/^(Вопрос\s*\d+\s*[:.]|\d+\s*[.)])\s*/, ''), // без «Вопрос 3:» и «1)»
+        text: i.comment || i.answer,
+        urgent: urgent.has(i.flag!),
+        source: 'из опроса',
+        at: g.at,
+      })),
   )
+  const messages = tense.map((a) => ({
+    flags: a.risk_flags,
+    text: a.text,
+    summary: a.summary,
+    urgent: a.severity === 'high' || a.risk_flags.some((f) => urgent.has(f)),
+    source: a.source === 'survey' ? 'из опроса' : 'из сообщения',
+    at: a.at,
+  }))
+  const shown = new Set(answers.map((c) => c.text))
+  const items: Concern[] = [...messages, ...answers].sort(
+    (a, b) => Number(b.urgent) - Number(a.urgent) || Date.parse(b.at) - Date.parse(a.at),
+  )
+  return { items, calm: data.analyses.filter((a) => a.severity === 'low' && !shown.has(a.text)) }
+}
+
+function Signals({ data, items, calm }: { data: EmployeeCardData; items: Concern[]; calm: AnalysisItem[] }) {
   return (
     <div className="flex flex-col gap-4">
       <Card
         title="Что заметил Корсик"
-        subtitle="Корсик читает свободные ответы и сообщения новичка и выделяет, что его беспокоит"
+        subtitle="Тревожные ответы в опросах и сообщения новичка, важное — первым"
       >
         {items.length === 0 ? (
-          <Empty>Пока нечего анализировать</Empty>
+          <Empty>
+            Ничего тревожного
+            {calm.length === 0 && (
+              <span className="text-xs text-ink/40">
+                Если {data.employee.first_name} ответит тревожно в опросе или в чате, это появится здесь
+              </span>
+            )}
+          </Empty>
         ) : (
           <div className="flex flex-col gap-3">
-            {items.map((a, i) => (
+            {items.map((c, i) => (
               <div
                 key={i}
                 className={clsx(
                   'rounded-2xl border p-4',
-                  a.severity === 'high' ? 'border-rose-200 bg-rose-50/40' : 'border-ink/[0.07]',
+                  c.urgent ? 'border-rose-200 bg-rose-50/40' : 'border-ink/[0.07]',
                 )}
               >
-                <div className="text-sm">«{a.text}»</div>
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="text-ink/45">Настроение:</span>
-                  <Badge tone={SENTIMENT[a.sentiment]?.tone}>{SENTIMENT[a.sentiment]?.label}</Badge>
-                  {a.risk_flags.map((f) => (
-                    <Badge key={f} tone="red">
-                      {f}
-                    </Badge>
-                  ))}
-                  {a.topics
-                    .filter((t) => t !== 'другое')
-                    .map((t) => (
-                      <Badge key={t}>{t}</Badge>
+                {c.flags.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {c.flags.map((f) => (
+                      <Badge key={f} tone={c.urgent ? 'red' : 'amber'}>
+                        {f}
+                      </Badge>
                     ))}
-                </div>
-                {a.summary && <div className="mt-2 text-sm text-ink/60">{a.summary}</div>}
-                <div className="mt-2 flex justify-between text-xs text-ink/40">
-                  <span>{SEVERITY[a.severity]?.label}</span>
+                  </div>
+                )}
+                {c.question && <div className="mb-1 text-xs text-ink/50">{c.question}</div>}
+                <div className="text-sm">«{c.text}»</div>
+                {c.summary && <div className="mt-2 text-sm text-ink/60">{c.summary}</div>}
+                <div className="mt-2 flex justify-between gap-3 text-xs text-ink/40">
+                  <span className="font-medium text-rose-700">{c.urgent && 'срочно'}</span>
                   <span>
-                    {a.source === 'survey' ? 'из опроса' : 'из сообщения'} · {timeAgo(a.at)}
+                    {c.source} · {timeAgo(c.at)}
                   </span>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </Card>
-      <Card title="Кого Корсик уведомил">
-        {data.notifications.length === 0 ? (
-          <Empty>Уведомлений не было</Empty>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {data.notifications.map((n, i) => (
-              <div key={i} className="flex gap-3 rounded-xl bg-sky-50/60 p-3 text-sm">
-                <BellRing size={16} className="mt-0.5 shrink-0 text-sky-700" />
-                <div className="min-w-0 flex-1">
-                  <div className="mb-0.5 text-xs text-ink/50">
-                    {n.to === 'manager' ? 'Руководителю' : 'Рекрутеру'} · {timeAgo(n.at)} ·{' '}
-                    {n.delivered ? 'в MAX' : 'в панели'}
-                  </div>
-                  <div className="whitespace-pre-wrap text-ink/80">{n.text}</div>
+        {calm.length > 0 && (
+          <details className="group mt-3">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-[13px] text-ink/55 select-none hover:text-ink/80">
+              {items.length ? 'Ещё' : 'Показать'} {calm.length}{' '}
+              {plural(calm.length, 'спокойное', 'спокойных', 'спокойных')}
+              <ChevronDown size={14} className="transition group-open:rotate-180" />
+            </summary>
+            <div className="mt-1 flex flex-col divide-y divide-ink/[0.05]">
+              {calm.map((a, i) => (
+                <div key={i} className="flex items-start justify-between gap-4 py-2.5 text-sm">
+                  <span className="text-ink/70">«{a.text}»</span>
+                  <span className="shrink-0 text-xs text-ink/40">
+                    {a.source === 'survey' ? 'из опроса' : 'из сообщения'} · {timeAgo(a.at)}
+                  </span>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </details>
         )}
       </Card>
+      <Notifications data={data} />
     </div>
+  )
+}
+
+/** Одно и то же уведомление тому же человеку показываем один раз — самое свежее (сервер отдаёт свежие первыми). */
+const unique = (list: Notification[]) =>
+  list.filter((n, i) => list.findIndex((m) => m.to === n.to && m.text === n.text) === i)
+
+/** Почему уведомление не дошло в MAX. Сервер помнит только «дошло или нет» (channels.notify_staff): не дойти
+ *  могло, если Корсик не подключён к MAX, адресат не назначен или не подключил MAX, либо MAX не принял сообщение.
+ *  Причину видно по нынешнему состоянию команды; если сейчас всё подключено — причину не называем. */
+function delivery(n: Notification, e: Employee, meta: Meta | undefined) {
+  if (n.delivered) return 'доставлено в MAX'
+  const who = n.to === 'manager' ? 'руководитель' : 'рекрутер'
+  const id = n.to === 'manager' ? e.manager_id : e.recruiter_id
+  if (meta && !meta.max_connected) return 'в MAX не доставлено — Корсик не подключён к MAX'
+  if (!id) return `в MAX не доставлено — ${who} не назначен`
+  if (meta?.staff.find((x) => x.id === id)?.max_connected === false)
+    return `в MAX не доставлено — ${who} не подключил MAX`
+  return 'в MAX не доставлено'
+}
+
+function Notifications({ data }: { data: EmployeeCardData }) {
+  const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
+  const list = unique(data.notifications)
+  return (
+    <Card title="Кого Корсик уведомил">
+      {list.length === 0 ? (
+        <Empty>Корсик пока не писал руководителю и рекрутеру об этом новичке</Empty>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {list.map((n, i) => (
+            <div key={i} className="flex gap-3 rounded-xl bg-sky-50/60 p-3 text-sm">
+              <BellRing size={16} className="mt-0.5 shrink-0 text-sky-700" />
+              <div className="min-w-0 flex-1">
+                <div className="mb-0.5 text-xs text-ink/50">
+                  {n.to === 'manager' ? 'Руководителю' : 'Рекрутеру'} · {timeAgo(n.at)} ·{' '}
+                  <span className={clsx(!n.delivered && 'text-amber-700')}>
+                    {delivery(n, data.employee, meta)}
+                  </span>
+                </div>
+                <div className="whitespace-pre-wrap text-ink/80">{n.text}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -374,7 +871,7 @@ function TicketsTab({ data }: { data: EmployeeCardData }) {
   if (!data.tickets.length)
     return (
       <Card>
-        <Empty>Обращений не было</Empty>
+        <Empty>Если {data.employee.first_name} попросит помощи HR в чате, обращение появится здесь</Empty>
       </Card>
     )
   return (
@@ -387,8 +884,8 @@ function TicketsTab({ data }: { data: EmployeeCardData }) {
             className="-mx-2 flex items-center gap-3 rounded-xl px-2 py-3 hover:bg-ink/[0.025]"
           >
             <Badge tone={TICKET_KIND[t.kind]?.tone}>{TICKET_KIND[t.kind]?.label}</Badge>
-            <span className="min-w-0 flex-1 truncate text-sm">{t.subject}</span>
-            <span className="text-xs text-ink/45">
+            <span className="line-clamp-2 min-w-0 flex-1 text-sm">{ownWords(t.subject)}</span>
+            <span className="shrink-0 text-xs text-ink/45">
               {t.status === 'open' ? 'открыто' : 'решено'} · {timeAgo(t.created_at)}
             </span>
           </Link>
