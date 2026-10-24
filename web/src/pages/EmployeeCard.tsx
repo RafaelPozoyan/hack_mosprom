@@ -63,14 +63,14 @@ export default function EmployeeCard() {
   const demo = useDemo()
   const [tab, setTab] = useState<Tab>('journey')
   const [invite, setInvite] = useState(false)
-  const { data } = useQuery({
+  const { data, error, refetch, isFetching } = useQuery({
     queryKey: ['employee', id],
     queryFn: () => api.get<EmployeeCardData>(`/api/employees/${id}`),
     refetchInterval: 10_000,
   })
   const { data: support } = useSupport(Number(id))
   const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['employee', id] }), [qc, id])
-  if (!data) return null
+  if (!data) return error ? <LoadError error={error} retry={() => refetch()} busy={isFetching} /> : null
   const e = data.employee
   const { day, total } = probationDay(e)
   const concerns = concernsOf(data, support?.reasons ?? [])
@@ -156,6 +156,30 @@ export default function EmployeeCard() {
       )}
       {invite && <InviteModal e={e} onClose={() => setInvite(false)} />}
     </div>
+  )
+}
+
+/** Карточка не загрузилась: сотрудника нет (удалили, неверная ссылка) или нет связи с сервером. */
+function LoadError({ error, retry, busy }: { error: Error; retry: () => void; busy: boolean }) {
+  const missing = error instanceof ApiError && [404, 422].includes(error.status)
+  return (
+    <Card className="mx-auto w-full max-w-5xl">
+      {missing ? (
+        <Empty>
+          Такого сотрудника нет — возможно, карточку удалили
+          <Link to="/employees" className="font-medium text-ink/70 hover:text-ink">
+            К списку сотрудников
+          </Link>
+        </Empty>
+      ) : (
+        <Empty>
+          Не удалось загрузить карточку. Проверьте соединение.
+          <Btn small variant="ghost" onClick={retry} disabled={busy}>
+            Повторить
+          </Btn>
+        </Empty>
+      )}
+    </Card>
   )
 }
 
