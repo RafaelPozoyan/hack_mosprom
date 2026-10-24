@@ -41,55 +41,124 @@ STAFF = [
 # (ФИО, должность, площадка, дней с выхода, форма обращения, сценарий ответов)
 PEOPLE = [
     ("Петров Иван", "Инженер-технолог", "GTP", -2, None, []),
-    ("Соколова Ольга", "Специалист по закупкам", "Luzhniki", 4, "ty", [
-        ("d3_survey", {"docs": "a", "team": "b", "tasks": "c"}),
-        ("chat", "Как получить доступ к корпоративному порталу?"),
-        ("chat", "Какие документы нужны для оформления?"),
-    ]),
-    ("Новиков Дмитрий", "Аналитик данных", "GrPP", 16, "vy", [
-        ("d3_survey", {"docs": "a", "team": "a", "tasks": "a"}),
-        ("w2_check", {
-            "tasks_clear": "yes",
-            "info_enough": ("no", "Не хватает доступа к отчётам в 1С, жду уже неделю, работа стоит"),
-            "manager_available": "9", "manager_feedback": "8", "peers_support": "9",
-            "it_support": ("4", "Ноутбук выдали только на четвёртый день, VPN до сих пор не настроен"),
-            "access_timely": ("3", "Доступы к 1С и CRM дали только через неделю после выхода"),
-            "hr_support": "9", "hr_onboarding": "10",
-        }),
-        ("chat", "Во сколько начинается рабочий день?"),
-        ("chat", "Можно ли принимать подарки от поставщиков?"),
-    ]),
-    ("Морозова Алина", "Оператор экструзионной линии", "GTP", 55, "ty", [
-        ("d3_survey", {"docs": "a", "team": "c", "tasks": "b"}),
-        ("w2_check", {
-            "tasks_clear": "yes", "info_enough": "yes",
-            "manager_available": ("6", "Наставник постоянно занят, отвечает раздражённо и при всех говорит, что у него нет времени объяснять очевидное"),
-            "manager_feedback": ("5", "Обратной связи почти нет, узнаю об ошибках от коллег"),
-            "peers_support": ("6", "Коллеги помогают, но наставник сказал их не отвлекать"),
-            "it_support": "8", "access_timely": "9", "hr_support": "8", "hr_onboarding": "9",
-        }),
-        ("m2_congrats", {"progress": "c"}),
-        ("m1w3_survey", {"mood": "c", "helpers": ["peers"], "accelerate": "clear_tasks"}),
-        ("chat", "Есть ли корпоративный транспорт до площадки?"),
-    ]),
-    ("Лебедев Павел", "Менеджер по продажам", "Luzhniki", 91, "ty", [
-        ("d3_survey", {"docs": "a", "team": "a", "tasks": "a"}),
-        ("w2_check", {"tasks_clear": "yes", "info_enough": "yes", "manager_available": "9", "manager_feedback": "9",
-                      "peers_support": "10", "it_support": "9", "access_timely": "8", "hr_support": "10", "hr_onboarding": "9"}),
-        ("m1w3_survey", {"mood": "a", "helpers": ["manager", "peers", "recruiter"], "accelerate": "automation"}),
-        ("chat", "Как оформить ежегодный отпуск?"),
-        ("chat", "Какая компенсация за использование личного автомобиля?"),
-        ("final", {
-            "hardest": "b",
-            "stay": ("b", "Предложили более высокую зарплату в другой компании, пока думаю"),
-            "load": ("7", "Много срочных задач от смежных отделов"),
-            "expectations": "8", "info_enough": "yes", "manager_available": "9", "manager_feedback": "8",
-            "peers_support": "9",
-            "departments": ("5", "Согласование договоров с юристами занимает по две недели"),
-            "hr_support": "9", "goals_done": "8",
-            "improve": "Сделать единый чат с ответами по процессам согласования договоров",
-        }),
-    ]),
+    (
+        "Соколова Ольга",
+        "Специалист по закупкам",
+        "Luzhniki",
+        4,
+        "ty",
+        [
+            ("d3_survey", {"docs": "a", "team": "b", "tasks": "c"}),
+            ("chat", "Как получить доступ к корпоративному порталу?"),
+            ("chat", "Какие документы нужны для оформления?"),
+        ],
+    ),
+    (
+        "Новиков Дмитрий",
+        "Аналитик данных",
+        "GrPP",
+        16,
+        "vy",
+        [
+            ("d3_survey", {"docs": "a", "team": "a", "tasks": "a"}),
+            (
+                "w2_check",
+                {
+                    "tasks_clear": "yes",
+                    "info_enough": ("no", "Не хватает доступа к отчётам в 1С, жду уже неделю, работа стоит"),
+                    "manager_available": "9",
+                    "manager_feedback": "8",
+                    "peers_support": "9",
+                    "it_support": (
+                        "4",
+                        "Ноутбук выдали только на четвёртый день, VPN до сих пор не настроен",
+                    ),
+                    "access_timely": ("3", "Доступы к 1С и CRM дали только через неделю после выхода"),
+                    "hr_support": "9",
+                    "hr_onboarding": "10",
+                },
+            ),
+            ("chat", "Во сколько начинается рабочий день?"),
+            ("chat", "Можно ли принимать подарки от поставщиков?"),
+        ],
+    ),
+    (
+        "Морозова Алина",
+        "Оператор экструзионной линии",
+        "GTP",
+        55,
+        "ty",
+        [
+            ("d3_survey", {"docs": "a", "team": "c", "tasks": "b"}),
+            (
+                "w2_check",
+                {
+                    "tasks_clear": "yes",
+                    "info_enough": "yes",
+                    "manager_available": (
+                        "6",
+                        "Наставник постоянно занят, отвечает раздражённо и при всех говорит, что у него нет времени объяснять очевидное",
+                    ),
+                    "manager_feedback": ("5", "Обратной связи почти нет, узнаю об ошибках от коллег"),
+                    "peers_support": ("6", "Коллеги помогают, но наставник сказал их не отвлекать"),
+                    "it_support": "8",
+                    "access_timely": "9",
+                    "hr_support": "8",
+                    "hr_onboarding": "9",
+                },
+            ),
+            ("m2_congrats", {"progress": "c"}),
+            ("m1w3_survey", {"mood": "c", "helpers": ["peers"], "accelerate": "clear_tasks"}),
+            ("chat", "Есть ли корпоративный транспорт до площадки?"),
+        ],
+    ),
+    (
+        "Лебедев Павел",
+        "Менеджер по продажам",
+        "Luzhniki",
+        91,
+        "ty",
+        [
+            ("d3_survey", {"docs": "a", "team": "a", "tasks": "a"}),
+            (
+                "w2_check",
+                {
+                    "tasks_clear": "yes",
+                    "info_enough": "yes",
+                    "manager_available": "9",
+                    "manager_feedback": "9",
+                    "peers_support": "10",
+                    "it_support": "9",
+                    "access_timely": "8",
+                    "hr_support": "10",
+                    "hr_onboarding": "9",
+                },
+            ),
+            (
+                "m1w3_survey",
+                {"mood": "a", "helpers": ["manager", "peers", "recruiter"], "accelerate": "automation"},
+            ),
+            ("chat", "Как оформить ежегодный отпуск?"),
+            ("chat", "Какая компенсация за использование личного автомобиля?"),
+            (
+                "final",
+                {
+                    "hardest": "b",
+                    "stay": ("b", "Предложили более высокую зарплату в другой компании, пока думаю"),
+                    "load": ("7", "Много срочных задач от смежных отделов"),
+                    "expectations": "8",
+                    "info_enough": "yes",
+                    "manager_available": "9",
+                    "manager_feedback": "8",
+                    "peers_support": "9",
+                    "departments": ("5", "Согласование договоров с юристами занимает по две недели"),
+                    "hr_support": "9",
+                    "goals_done": "8",
+                    "improve": "Сделать единый чат с ответами по процессам согласования договоров",
+                },
+            ),
+        ],
+    ),
 ]
 
 
@@ -99,7 +168,9 @@ async def load_kb(dirs: list[Path]) -> None:
             if f.suffix.lower() not in KB_EXT or "ТЗ" in f.name or "КЕЙС" in f.name:
                 continue
             async with session() as s:
-                if await s.scalar(select(Document.id).where(Document.filename == f.name, Document.status == "ready")):
+                if await s.scalar(
+                    select(Document.id).where(Document.filename == f.name, Document.status == "ready")
+                ):
                     print(f"  уже в базе: {f.name}")
                     continue
                 doc = await ingest(s, f.name, f.read_bytes(), f.stem, [], settings().chunk_max_chars)
@@ -137,10 +208,18 @@ async def answer_survey(emp_id: int, answers: dict) -> None:
         val = answers.get(q["id"])
         if aw == "survey_comment":
             comment = val[1] if isinstance(val, tuple) else None
-            await event(emp_id, InEvent("text", text=comment) if comment else InEvent("callback", payload="a:skip_comment"))
+            await event(
+                emp_id,
+                InEvent("text", text=comment) if comment else InEvent("callback", payload="a:skip_comment"),
+            )
             continue
         if q["type"] == "text":
-            await event(emp_id, InEvent("text", text=val) if val else InEvent("callback", payload=f"s:{st['id']}:{q['id']}:skip"))
+            await event(
+                emp_id,
+                InEvent("text", text=val)
+                if val
+                else InEvent("callback", payload=f"s:{st['id']}:{q['id']}:skip"),
+            )
         elif q["type"] == "multi":
             for opt in val or []:
                 await event(emp_id, InEvent("callback", payload=f"m:{st['id']}:{q['id']}:{opt}"))
@@ -171,10 +250,19 @@ async def main(dirs: list[Path]) -> None:
         for full, pos, site, days, form, _ in PEOPLE:
             start = next_workday(date.today() - timedelta(days=days))  # выходят на работу в рабочий день
             e = Employee(
-                full_name=full, first_name=full.split()[1], position=pos, site_code=site, start_date=start,
-                probation_end=add_months(start, settings().probation_months), manager_id=staff["manager"].id,
-                recruiter_id=staff["recruiter"].id, address_form=form, channel="web",
-                status="invited" if days < 0 else "active", invite_code=secrets.token_urlsafe(9), state={},
+                full_name=full,
+                first_name=full.split()[1],
+                position=pos,
+                site_code=site,
+                start_date=start,
+                probation_end=add_months(start, settings().probation_months),
+                manager_id=staff["manager"].id,
+                recruiter_id=staff["recruiter"].id,
+                address_form=form,
+                channel="web",
+                status="invited" if days < 0 else "active",
+                invite_code=secrets.token_urlsafe(9),
+                state={},
             )
             s.add(e)
             await s.commit()
@@ -209,7 +297,9 @@ async def main(dirs: list[Path]) -> None:
             if at is None:
                 async with session() as s:
                     emp = await s.get(Employee, emp_id)
-                    at = datetime.now(ZoneInfo("UTC")) - timedelta(days=max(0, (date.today() - emp.start_date).days - 1))
+                    at = datetime.now(ZoneInfo("UTC")) - timedelta(
+                        days=max(0, (date.today() - emp.start_date).days - 1)
+                    )
             async with session() as s:
                 await backdate(s, before, at)
     print("\nГотово.")

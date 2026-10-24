@@ -35,7 +35,9 @@ class Settings(BaseSettings):
     embed_dim: int = 1024  # BAAI/bge-m3
     rerank_url: str = "http://localhost:8083"  # BAAI/bge-reranker-v2-m3; пусто — без реранкинга
     docling_url: str = "http://localhost:5001"
-    ocr_preset: str = "tesseract"  # Tesseract LSTM + tessdata_best/rus — чистые сканы 300 dpi распознаются почти без ошибок
+    ocr_preset: str = (
+        "tesseract"  # Tesseract LSTM + tessdata_best/rus — чистые сканы 300 dpi распознаются почти без ошибок
+    )
     ocr_lang: str = "rus"
 
     # Чанкинг и поиск. Размер чанка и число кандидатов подбираются прогоном eval/run_eval.py.
@@ -44,7 +46,9 @@ class Settings(BaseSettings):
     rrf_k: int = 60
     retrieve_candidates: int = 30
     rerank_candidates: int = 20  # eval: гибридный поиск находит нужный фрагмент в топ-20 в 100% случаев
-    rerank_top_n: int = 3  # eval: Hit@3 = Hit@5 (97%) — больше источников в промпте не дают качества, только задержку
+    rerank_top_n: int = (
+        3  # eval: Hit@3 = Hit@5 (97%) — больше источников в промпте не дают качества, только задержку
+    )
     # Порог уверенности реранкера, ниже которого бот не отвечает, а предлагает HR.
     # Калибруется скриптом eval/run_eval.py на размеченном наборе вопросов: у вопросов с ответом лучший фрагмент
     # получает не ниже 0.041, у вопросов без ответа — не выше 0.032; порог — середина этого зазора.

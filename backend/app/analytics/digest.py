@@ -23,12 +23,24 @@ log = logging.getLogger(__name__)
 async def collect(s: AsyncSession, start: date, end: date) -> dict:
     t0 = datetime.combine(start, datetime.min.time(), tzinfo=ZoneInfo("UTC"))
     t1 = datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=ZoneInfo("UTC"))
-    analyses = (await s.scalars(select(Analysis).where(Analysis.created_at >= t0, Analysis.created_at < t1))).all()
-    answers = (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.created_at >= t0, SurveyAnswer.created_at < t1))).all()
-    questions = (await s.scalars(select(Question).where(Question.created_at >= t0, Question.created_at < t1))).all()
+    analyses = (
+        await s.scalars(select(Analysis).where(Analysis.created_at >= t0, Analysis.created_at < t1))
+    ).all()
+    answers = (
+        await s.scalars(
+            select(SurveyAnswer).where(SurveyAnswer.created_at >= t0, SurveyAnswer.created_at < t1)
+        )
+    ).all()
+    questions = (
+        await s.scalars(select(Question).where(Question.created_at >= t0, Question.created_at < t1))
+    ).all()
     tickets = (await s.scalars(select(Ticket).where(Ticket.created_at >= t0, Ticket.created_at < t1))).all()
     # «в адаптации» — запустили бота и ещё на испытательном сроке, как в дашборде (stage)
-    active = [e for e in (await s.scalars(select(Employee).where(Employee.status == "active"))).all() if stage(e) != "завершили"]
+    active = [
+        e
+        for e in (await s.scalars(select(Employee).where(Employee.status == "active"))).all()
+        if stage(e) != "завершили"
+    ]
 
     sentiment = Counter(a.sentiment for a in analyses)
     clusters: dict[str, dict] = {}
@@ -54,7 +66,10 @@ async def collect(s: AsyncSession, start: date, end: date) -> dict:
         "texts_analyzed": len(analyses),
         "sentiment": dict(sentiment),
         "clusters": sorted(
-            ({"name": k, "count": v["count"], "employees": len(v["employees"]), "quotes": v["quotes"]} for k, v in clusters.items()),
+            (
+                {"name": k, "count": v["count"], "employees": len(v["employees"]), "quotes": v["quotes"]}
+                for k, v in clusters.items()
+            ),
             key=lambda c: c["count"],
             reverse=True,
         ),

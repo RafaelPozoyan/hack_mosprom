@@ -20,9 +20,15 @@ from app.models import MaxUpdate
 
 
 def event(mid="m1", user=1):
-    return {"update_type": "message_created", "timestamp": 1,
-            "message": {"sender": {"user_id": user}, "recipient": {"chat_id": user},
-                        "body": {"mid": mid, "text": "Демо-вопрос"}}}
+    return {
+        "update_type": "message_created",
+        "timestamp": 1,
+        "message": {
+            "sender": {"user_id": user},
+            "recipient": {"chat_id": user},
+            "body": {"mid": mid, "text": "Демо-вопрос"},
+        },
+    }
 
 
 @pytest_asyncio.fixture
@@ -39,10 +45,12 @@ async def db(monkeypatch):
     try:
         async with engine.begin() as c:
             await c.run_sync(MaxUpdate.__table__.create)
+
         @asynccontextmanager
         async def session():
             async with factory() as s:
                 yield s
+
         monkeypatch.setattr(inbox, "session", session)
         yield factory
     finally:
@@ -54,9 +62,14 @@ async def db(monkeypatch):
 
 @pytest_asyncio.fixture
 async def api(monkeypatch):
-    monkeypatch.setattr(main, "settings", lambda: SimpleNamespace(max_token="test", max_webhook_secret="secret"))
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app, raise_app_exceptions=False),
-                                base_url="http://test", headers={"X-Max-Bot-Api-Secret": "secret"}) as client:
+    monkeypatch.setattr(
+        main, "settings", lambda: SimpleNamespace(max_token="test", max_webhook_secret="secret")
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=main.app, raise_app_exceptions=False),
+        base_url="http://test",
+        headers={"X-Max-Bot-Api-Secret": "secret"},
+    ) as client:
         yield client
 
 
@@ -83,7 +96,9 @@ async def test_webhook_commits_before_ack_and_deduplicates(db, api, monkeypatch)
 async def test_webhook_failure_and_auth(api, monkeypatch):
     enqueue = AsyncMock(side_effect=RuntimeError("database unavailable"))
     monkeypatch.setattr(inbox, "enqueue", enqueue)
-    assert (await api.post("/max/webhook", json=event(), headers={"X-Max-Bot-Api-Secret": "wrong"})).status_code == 403
+    assert (
+        await api.post("/max/webhook", json=event(), headers={"X-Max-Bot-Api-Secret": "wrong"})
+    ).status_code == 403
     enqueue.assert_not_awaited()
     assert (await api.post("/max/webhook", json=event())).status_code == 500
     monkeypatch.setattr(main, "settings", lambda: SimpleNamespace(max_token="", max_webhook_secret=""))
@@ -104,12 +119,14 @@ async def test_parallel_workers_keep_user_order_but_allow_other_users(db, monkey
         await inbox.enqueue(upd)
     started, release = asyncio.Event(), asyncio.Event()
     seen = []
+
     async def handle(upd, **kw):
         mid = upd["message"]["body"]["mid"]
         seen.append(mid)
         if mid == "first":
             started.set()
             await release.wait()
+
     monkeypatch.setattr(inbox, "process_max_update", handle)
     task = asyncio.create_task(inbox.process_one())
     try:
@@ -129,9 +146,11 @@ async def test_parallel_workers_keep_user_order_but_allow_other_users(db, monkey
 async def test_cancelled_worker_leaves_event_for_restart(db, monkeypatch):
     await inbox.enqueue(event())
     started = asyncio.Event()
+
     async def stopped(*a, **kw):
         started.set()
         await asyncio.Event().wait()
+
     monkeypatch.setattr(inbox, "process_max_update", stopped)
     worker = asyncio.create_task(inbox.process_one())
     await asyncio.wait_for(started.wait(), timeout=5)
@@ -163,8 +182,11 @@ async def test_failed_event_retries_and_blocks_later_user_events(db, monkeypatch
             await s.commit()
     # Оператор исправил причину и повторно поставил ошибочное событие в очередь.
     async with db() as s:
-        await s.execute(update(MaxUpdate).where(MaxUpdate.status == "failed")
-                        .values(status="pending", attempts=0, available_at=inbox.utcnow()))
+        await s.execute(
+            update(MaxUpdate)
+            .where(MaxUpdate.status == "failed")
+            .values(status="pending", attempts=0, available_at=inbox.utcnow())
+        )
         await s.commit()
     monkeypatch.setattr(inbox, "process_max_update", AsyncMock())
     assert await inbox.process_one() and await inbox.process_one()
@@ -184,7 +206,9 @@ def test_identity_distinguishes_clicks_and_starts():
 @pytest.mark.asyncio
 async def test_max_errors_reach_queue(monkeypatch):
     monkeypatch.setattr(updates, "_employee_by_user", AsyncMock(return_value=1))
-    monkeypatch.setattr(updates, "handle_employee_event", AsyncMock(side_effect=RuntimeError("handler failed")))
+    monkeypatch.setattr(
+        updates, "handle_employee_event", AsyncMock(side_effect=RuntimeError("handler failed"))
+    )
     with pytest.raises(RuntimeError, match="handler failed"):
         await updates.process_max_update(event(), raise_errors=True)
     await updates.process_max_update(event())  # прежний контракт демо/поллинга сохранён
@@ -212,8 +236,9 @@ async def handle(*a, **kw):
 inbox.session, inbox.process_max_update = session, handle
 asyncio.run(inbox.process_one())
 """
-    proc = await asyncio.create_subprocess_exec(sys.executable, "-c", script, os.environ["TEST_DATABASE_URL"],
-                                               schema, stdout=asyncio.subprocess.PIPE)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script, os.environ["TEST_DATABASE_URL"], schema, stdout=asyncio.subprocess.PIPE
+    )
     try:
         assert await asyncio.wait_for(proc.stdout.readline(), timeout=10) == b"claimed\n"
     finally:
@@ -231,6 +256,7 @@ async def test_dialog_errors_are_not_swallowed_in_queue_mode(monkeypatch):
     @asynccontextmanager
     async def session():
         yield SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id=1)))
+
     monkeypatch.setattr(updates, "session", session)
     monkeypatch.setattr(updates.dialog, "handle", AsyncMock(side_effect=RuntimeError("dialog failed")))
     with pytest.raises(RuntimeError, match="dialog failed"):

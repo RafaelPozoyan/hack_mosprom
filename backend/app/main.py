@@ -37,9 +37,17 @@ def spa_file(root: Path, path: str) -> Path:
 async def seed_sites() -> None:
     async with session() as s:
         for code, site in scenario()["sites"].items():
-            stmt = insert(Site).values(code=code, name=site["name"], kind=site.get("kind", "office"),
-                                       tz=site.get("tz", settings().default_tz))
-            await s.execute(stmt.on_conflict_do_update(index_elements=[Site.code], set_={"name": stmt.excluded.name, "kind": stmt.excluded.kind}))
+            stmt = insert(Site).values(
+                code=code,
+                name=site["name"],
+                kind=site.get("kind", "office"),
+                tz=site.get("tz", settings().default_tz),
+            )
+            await s.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=[Site.code], set_={"name": stmt.excluded.name, "kind": stmt.excluded.kind}
+                )
+            )
         await s.commit()
 
 

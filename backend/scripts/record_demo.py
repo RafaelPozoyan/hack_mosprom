@@ -24,7 +24,9 @@ def bot_messages(page: Page) -> int:
 
 def wait_bot(page: Page, before: int, n: int = 1) -> None:
     page.wait_for_function(
-        "([s, b, n]) => document.querySelectorAll(s).length >= b + n", arg=[BOT, before, n], timeout=WAIT_AI_MS
+        "([s, b, n]) => document.querySelectorAll(s).length >= b + n",
+        arg=[BOT, before, n],
+        timeout=WAIT_AI_MS,
     )
     page.wait_for_timeout(1500)
 
@@ -47,9 +49,15 @@ def press(page: Page, label: str, expect: int = 1) -> None:
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
-    ctx = browser.new_context(viewport={"width": 1600, "height": 960}, record_video_dir=OUT, record_video_size={"width": 1600, "height": 960})
+    ctx = browser.new_context(
+        viewport={"width": 1600, "height": 960},
+        record_video_dir=OUT,
+        record_video_size={"width": 1600, "height": 960},
+    )
     page = ctx.new_page()
-    page.add_init_script("localStorage.setItem('korsik_role', JSON.stringify('hr')); localStorage.setItem('korsik_demo', 'true')")
+    page.add_init_script(
+        "localStorage.setItem('korsik_role', JSON.stringify('hr')); localStorage.setItem('korsik_demo', 'true')"
+    )
 
     page.goto(f"{BASE}/", wait_until="networkidle")
     page.wait_for_timeout(3500)

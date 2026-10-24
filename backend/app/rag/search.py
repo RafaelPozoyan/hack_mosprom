@@ -73,7 +73,12 @@ async def rerank(query: str, texts: list[str]) -> list[float]:
 
 
 async def search(
-    s: AsyncSession, query: str, site: str = "", top_n: int | None = None, mode: str = "hybrid", use_rerank: bool = True
+    s: AsyncSession,
+    query: str,
+    site: str = "",
+    top_n: int | None = None,
+    mode: str = "hybrid",
+    use_rerank: bool = True,
 ) -> list[Hit]:
     """mode: hybrid | vector | lexical — отдельные режимы нужны для абляции в eval/run_eval.py."""
     cfg = settings()
@@ -88,7 +93,10 @@ async def search(
     if not fused:
         return []
     rows = {r.id: r for r in (await s.execute(FETCH_SQL, {"ids": [cid for cid, _ in fused]})).all()}
-    hits = [Hit(cid, rows[cid].document_id, rows[cid].title, rows[cid].heading, rows[cid].text, sc) for cid, sc in fused]
+    hits = [
+        Hit(cid, rows[cid].document_id, rows[cid].title, rows[cid].heading, rows[cid].text, sc)
+        for cid, sc in fused
+    ]
     if cfg.rerank_url and use_rerank:
         scores = await rerank(query, [f"{h.heading}\n{h.text}" for h in hits])
         for h, sc in zip(hits, scores, strict=True):

@@ -42,23 +42,38 @@ export default function DigestPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Настроения в коллективе новичков</h1>
-          <p className="mt-1 text-sm text-ink/50">Еженедельный дайджест приходит вам в MAX по понедельникам в 9:00</p>
+          <p className="mt-1 text-sm text-ink/50">
+            Еженедельный дайджест приходит вам в MAX по понедельникам в 9:00
+          </p>
         </div>
-        <Btn onClick={run} disabled={busy}>{busy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />} {busy ? 'Готовлю…' : 'Собрать за последнюю неделю'}</Btn>
+        <Btn onClick={run} disabled={busy}>
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}{' '}
+          {busy ? 'Готовлю…' : 'Собрать за последнюю неделю'}
+        </Btn>
       </div>
       {!d ? (
-        <Card><Empty>Дайджестов пока нет — нажмите «Собрать», чтобы получить первый</Empty></Card>
+        <Card>
+          <Empty>Дайджестов пока нет — нажмите «Собрать», чтобы получить первый</Empty>
+        </Card>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             <Mini label="Новичков на адаптации" value={d.stats.active_newcomers} />
             <Mini label="Ответов проанализировано" value={d.stats.texts_analyzed} />
-            <Mini label="Корсик ответил сам" value={d.stats.questions ? `${d.stats.answered_by_ai} из ${d.stats.questions}` : '—'} />
+            <Mini
+              label="Корсик ответил сам"
+              value={d.stats.questions ? `${d.stats.answered_by_ai} из ${d.stats.questions}` : '—'}
+            />
             <Mini label="Срочных сигналов" value={d.stats.red_flags} red={d.stats.red_flags > 0} />
           </div>
           {d.text.includes('🧠') && (
-            <Card title="Главное за неделю" subtitle={`Период ${d.period} · собран ${fmtDateTime(d.created_at)}`}>
-              <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink/85">{d.text.split('🧠')[1].trim()}</p>
+            <Card
+              title="Главное за неделю"
+              subtitle={`Период ${d.period} · собран ${fmtDateTime(d.created_at)}`}
+            >
+              <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-ink/85">
+                {d.text.split('🧠')[1].trim()}
+              </p>
             </Card>
           )}
           <Card title="Что беспокоит новичков" subtitle="Корсик сгруппировал свободные ответы по темам">
@@ -70,10 +85,14 @@ export default function DigestPage() {
                   <div key={c.name} className="rounded-2xl border border-ink/[0.07] p-4">
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-medium first-letter:uppercase">{c.name}</span>
-                      <Badge tone="amber">{c.employees} {plural(c.employees, 'человек', 'человека', 'человек')}</Badge>
+                      <Badge tone="amber">
+                        {c.employees} {plural(c.employees, 'человек', 'человека', 'человек')}
+                      </Badge>
                     </div>
                     {c.quotes.slice(0, 2).map((q, i) => (
-                      <div key={i} className="mt-2 border-l-2 border-ink/10 pl-3 text-sm text-ink/65 italic">«{q}»</div>
+                      <div key={i} className="mt-2 border-l-2 border-ink/10 pl-3 text-sm text-ink/65 italic">
+                        «{q}»
+                      </div>
                     ))}
                   </div>
                 ))}
@@ -83,12 +102,22 @@ export default function DigestPage() {
           {Object.keys(d.stats.avg_scores).length > 0 && (
             <Card title="Оценки в опросах" subtitle="Средний балл от 1 до 10; ниже 8 — повод разобраться">
               <div className="grid gap-x-8 gap-y-3 md:grid-cols-2">
-                {Object.entries(d.stats.avg_scores).sort((a, b) => a[1] - b[1]).map(([k, v]) => (
-                  <div key={k}>
-                    <div className="flex justify-between text-sm"><span className="first-letter:uppercase">{k}</span><span className={v < 8 ? 'font-semibold text-rose-600' : 'font-semibold'}>{v}</span></div>
-                    <div className="mt-1 h-2 rounded-full bg-ink/[0.07]"><div className={`h-2 rounded-full ${v < 8 ? 'bg-rose-500' : 'bg-lime'}`} style={{ width: `${v * 10}%` }} /></div>
-                  </div>
-                ))}
+                {Object.entries(d.stats.avg_scores)
+                  .sort((a, b) => a[1] - b[1])
+                  .map(([k, v]) => (
+                    <div key={k}>
+                      <div className="flex justify-between text-sm">
+                        <span className="first-letter:uppercase">{k}</span>
+                        <span className={v < 8 ? 'font-semibold text-rose-600' : 'font-semibold'}>{v}</span>
+                      </div>
+                      <div className="mt-1 h-2 rounded-full bg-ink/[0.07]">
+                        <div
+                          className={`h-2 rounded-full ${v < 8 ? 'bg-rose-500' : 'bg-lime'}`}
+                          style={{ width: `${v * 10}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
               </div>
             </Card>
           )}

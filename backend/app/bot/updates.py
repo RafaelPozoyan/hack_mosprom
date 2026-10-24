@@ -71,8 +71,13 @@ async def process_max_update(upd: dict, *, raise_errors: bool = False) -> None:
                 msg = upd.get("message") or {}
                 await handle_employee_event(
                     emp_id,
-                    InEvent("callback", payload=cb.get("payload", ""), text=_button_text(msg, cb.get("payload", "")),
-                            callback_id=cb["callback_id"], message_mid=(msg.get("body") or {}).get("mid")),
+                    InEvent(
+                        "callback",
+                        payload=cb.get("payload", ""),
+                        text=_button_text(msg, cb.get("payload", "")),
+                        callback_id=cb["callback_id"],
+                        message_mid=(msg.get("body") or {}).get("mid"),
+                    ),
                     raise_errors=raise_errors,
                 )
         elif kind == "message_created":
@@ -114,14 +119,18 @@ async def _on_started(user: dict, payload: str, *, raise_errors: bool = False) -
                 staff.max_user_id = user_id
                 await s.commit()
                 await max_client().send(
-                    OutMessage(text=f"Готово, {staff.name}! Сюда будут приходить уведомления Корсика об адаптации ваших сотрудников 🐾"),
+                    OutMessage(
+                        text=f"Готово, {staff.name}! Сюда будут приходить уведомления Корсика об адаптации ваших сотрудников 🐾"
+                    ),
                     user_id=user_id,
                 )
                 return
         emp = await s.scalar(select(Employee).where(Employee.invite_code == payload)) if payload else None
         # код из QR привязывается к одному аккаунту: чужой скан (QR на экране демо) не уводит путь новичка
         # на другой телефон, а один аккаунт не становится двумя сотрудниками
-        other = emp and await s.scalar(select(Employee.id).where(Employee.max_user_id == user_id, Employee.id != emp.id))
+        other = emp and await s.scalar(
+            select(Employee.id).where(Employee.max_user_id == user_id, Employee.id != emp.id)
+        )
         if emp and (emp.max_user_id not in (None, user_id) or other):
             await max_client().send(OutMessage(text=CODE_TAKEN), user_id=user_id)
             return
@@ -150,7 +159,11 @@ async def _on_hr_chat(msg: dict, text: str) -> None:
             t = await s.get(Ticket, int(m.group(1)))
         if not t:
             if from_bot:
-                await channels.post_hr_chat(OutMessage(text="Не нашёл обращение для этого ответа. Ответьте, пожалуйста, реплаем на карточку обращения."))
+                await channels.post_hr_chat(
+                    OutMessage(
+                        text="Не нашёл обращение для этого ответа. Ответьте, пожалуйста, реплаем на карточку обращения."
+                    )
+                )
             return
         author = (msg.get("sender") or {}).get("first_name") or (msg.get("sender") or {}).get("name") or "HR"
         if text.lower() in ("/close", "/закрыть"):

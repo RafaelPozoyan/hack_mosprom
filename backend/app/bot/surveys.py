@@ -37,8 +37,13 @@ def offer_buttons(emp: Employee, offer: list[str]) -> list[list[Button]]:
             rows.append([Button("📨 Передать проблему через Корсика", payload="a:relay")])
         elif o == "recruiter":
             link = emp.recruiter.max_link if emp.recruiter else None
-            rows.append([Button("🧑‍💼 Связаться с рекрутером", url=link) if link else Button(
-                "🧑‍💼 Связаться с рекрутером", payload="a:recruiter")])
+            rows.append(
+                [
+                    Button("🧑‍💼 Связаться с рекрутером", url=link)
+                    if link
+                    else Button("🧑‍💼 Связаться с рекрутером", payload="a:recruiter")
+                ]
+            )
         elif o == "recruiter_voice":
             rows.append([Button("Готов(а) озвучить причину лично рекрутеру", payload="a:recruiter_voice")])
     return rows
@@ -59,7 +64,12 @@ def question_message(emp: Employee, survey_id: str, q: dict, selected: list[str]
     elif kind == "multi":
         selected = selected or []
         rows = [
-            [Button(("✅ " if o["id"] in selected else "") + render(o["text"], emp), payload=f"m:{survey_id}:{q['id']}:{key}:{o['id']}")]
+            [
+                Button(
+                    ("✅ " if o["id"] in selected else "") + render(o["text"], emp),
+                    payload=f"m:{survey_id}:{q['id']}:{key}:{o['id']}",
+                )
+            ]
             for o in options(emp, q)
         ]
         rows.append([Button("Готово ➡️", payload=f"{prefix}:done")])
@@ -70,7 +80,11 @@ def question_message(emp: Employee, survey_id: str, q: dict, selected: list[str]
 
 async def start(s: AsyncSession, emp: Employee, survey_id: str) -> None:
     # недописанный комментарий к прошлому опросу не должен перехватывать ответы нового
-    state = {k: v for k, v in emp.state.items() if not (k == "await" and v.get("kind") in ("survey_comment", "survey_text"))}
+    state = {
+        k: v
+        for k, v in emp.state.items()
+        if not (k == "await" and v.get("kind") in ("survey_comment", "survey_text"))
+    }
     emp.state = {**state, "survey": {"id": survey_id, "q": 0, "selected": [], "key": uuid4().hex}}
     await s.commit()
     await _ask(s, emp)
@@ -103,7 +117,9 @@ def current(emp: Employee, survey_id: str, qid: str) -> dict | None:
     return q if q["id"] == qid else None
 
 
-async def toggle(s: AsyncSession, emp: Employee, survey_id: str, qid: str, opt: str, msg: Message | None) -> None:
+async def toggle(
+    s: AsyncSession, emp: Employee, survey_id: str, qid: str, opt: str, msg: Message | None
+) -> None:
     q = current(emp, survey_id, qid)
     if not q:
         return
@@ -158,19 +174,32 @@ async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: 
         value["flag"] = flag
     if q.get("topic"):
         value["topic"] = q["topic"]
-    ans = SurveyAnswer(employee_id=emp.id, survey_id=survey_id, question_id=qid, value=value, flagged=bool(flag))
+    ans = SurveyAnswer(
+        employee_id=emp.id, survey_id=survey_id, question_id=qid, value=value, flagged=bool(flag)
+    )
     s.add(ans)
     await s.commit()
     if flag and not ask:
         await react(s, emp, [flag], "medium", f"{render(q['text'], emp)} → {value.get('label') or value}")
 
     if ask:
-        emp.state = {**emp.state, "await": {"kind": "survey_comment", "answer_id": ans.id, "qid": qid, "offer": offer}}
+        emp.state = {
+            **emp.state,
+            "await": {"kind": "survey_comment", "answer_id": ans.id, "qid": qid, "offer": offer},
+        }
         await s.commit()
-        await channels.send(s, emp, OutMessage(text=render(ask, emp), buttons=[[Button(SKIP, payload=f"a:skip_comment:{ans.id}")]]))
+        await channels.send(
+            s,
+            emp,
+            OutMessage(text=render(ask, emp), buttons=[[Button(SKIP, payload=f"a:skip_comment:{ans.id}")]]),
+        )
         return
     if reply or offer:
-        await channels.send(s, emp, OutMessage(text=render(reply or "Понял {тебя|вас}!", emp), buttons=offer_buttons(emp, offer)))
+        await channels.send(
+            s,
+            emp,
+            OutMessage(text=render(reply or "Понял {тебя|вас}!", emp), buttons=offer_buttons(emp, offer)),
+        )
     await advance(s, emp)
 
 
@@ -184,7 +213,15 @@ async def comment(s: AsyncSession, emp: Employee, text: str | None) -> None:
     if aw.get("kind") == "survey_text":
         st = emp.state["survey"]
         q = questions(emp, st["id"])[st["q"]]
-        s.add(SurveyAnswer(employee_id=emp.id, survey_id=st["id"], question_id=q["id"], value={"text": text}, comment=text))
+        s.add(
+            SurveyAnswer(
+                employee_id=emp.id,
+                survey_id=st["id"],
+                question_id=q["id"],
+                value={"text": text},
+                comment=text,
+            )
+        )
         await s.commit()
     elif aw.get("answer_id") and text:
         ans = await s.get(SurveyAnswer, aw["answer_id"])
@@ -203,7 +240,10 @@ async def comment(s: AsyncSession, emp: Employee, text: str | None) -> None:
         await channels.send(
             s,
             emp,
-            OutMessage(text=render("Спасибо, что {поделился|поделились}! Если нужно — передам это коллегам:", emp), buttons=offer_buttons(emp, aw["offer"])),
+            OutMessage(
+                text=render("Спасибо, что {поделился|поделились}! Если нужно — передам это коллегам:", emp),
+                buttons=offer_buttons(emp, aw["offer"]),
+            ),
         )
     if aw.get("offer"):
         emp.state = {**emp.state, "last_problem": text}
@@ -234,7 +274,9 @@ async def advance(s: AsyncSession, emp: Employee) -> None:
     emp.state = {k: v for k, v in emp.state.items() if k not in ("survey", "await")}
     await s.execute(
         update(Job)
-        .where(Job.employee_id == emp.id, Job.kind == "reminder", Job.ref == st["id"], Job.status == "pending")
+        .where(
+            Job.employee_id == emp.id, Job.kind == "reminder", Job.ref == st["id"], Job.status == "pending"
+        )
         .values(status="cancelled")
     )
     await s.commit()
@@ -252,7 +294,11 @@ async def remind(s: AsyncSession, emp: Employee, survey_id: str) -> None:
     await channels.send(
         s,
         emp,
-        OutMessage(text=render(r["text"], emp), image=r.get("image"), buttons=[[Button("Продолжить опрос ➡️", payload="a:resume")]]),
+        OutMessage(
+            text=render(r["text"], emp),
+            image=r.get("image"),
+            buttons=[[Button("Продолжить опрос ➡️", payload="a:resume")]],
+        ),
     )
 
 
@@ -260,17 +306,24 @@ async def resume(s: AsyncSession, emp: Employee) -> None:
     if not emp.state.get("survey"):
         return
     if (emp.state.get("await") or {}).get("kind") == "survey_comment":
-        await channels.send(s, emp, OutMessage(
-            text=render(COMMENT_PROMPT, emp),
-            buttons=[[Button(SKIP, payload=f"a:skip_comment:{emp.state['await']['answer_id']}")]],
-        ))
+        await channels.send(
+            s,
+            emp,
+            OutMessage(
+                text=render(COMMENT_PROMPT, emp),
+                buttons=[[Button(SKIP, payload=f"a:skip_comment:{emp.state['await']['answer_id']}")]],
+            ),
+        )
         return
     await _ask(s, emp)
 
 
 async def stale_button(s: AsyncSession, emp: Employee) -> None:
-    await channels.send(s, emp, OutMessage(
-        text="Эта кнопка относится к предыдущему вопросу. Текущий ответ не изменён.",
-        buttons=[[Button("К текущему вопросу ➡️", payload="a:resume")]] if emp.state.get("survey") else [],
-    ))
-
+    await channels.send(
+        s,
+        emp,
+        OutMessage(
+            text="Эта кнопка относится к предыдущему вопросу. Текущий ответ не изменён.",
+            buttons=[[Button("К текущему вопросу ➡️", payload="a:resume")]] if emp.state.get("survey") else [],
+        ),
+    )

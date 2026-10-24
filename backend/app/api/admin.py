@@ -77,16 +77,27 @@ async def meta(s: AsyncSession = Depends(get_session)):
         if key in seen:
             continue
         seen.add(key)
-        steps.append({"id": st["id"], "title": st.get("title", st["id"]), "phase": phase_of(st.get("at")), "at": st.get("at"),
-                      "sites": st.get("sites", []),
-                      "manual": st.get("manual", False), "audience": st.get("audience", "employee"),
-                      "preview": (st.get("messages") or [{}])[0].get("text", "")[:160]})
+        steps.append(
+            {
+                "id": st["id"],
+                "title": st.get("title", st["id"]),
+                "phase": phase_of(st.get("at")),
+                "at": st.get("at"),
+                "sites": st.get("sites", []),
+                "manual": st.get("manual", False),
+                "audience": st.get("audience", "employee"),
+                "preview": (st.get("messages") or [{}])[0].get("text", "")[:160],
+            }
+        )
     cfg = settings()
     return {
         "sites": [{"code": x.code, "name": x.name, "kind": x.kind, "tz": x.tz} for x in sites],
         "staff": [staff_view(x) for x in staff],
         "steps": steps,
-        "surveys": {k: {"title": v["title"], "questions": len(v["questions"])} for k, v in scenario()["surveys"].items()},
+        "surveys": {
+            k: {"title": v["title"], "questions": len(v["questions"])}
+            for k, v in scenario()["surveys"].items()
+        },
         "max_connected": bool(cfg.max_token),
         "max_bot_name": cfg.max_bot_name,
         "llm_model": cfg.llm_model,
@@ -94,10 +105,17 @@ async def meta(s: AsyncSession = Depends(get_session)):
 
 
 def staff_view(x: Staff) -> dict:
-    return {"id": x.id, "name": x.name, "role": x.role, "site_code": x.site_code, "max_connected": bool(x.max_user_id),
-            "max_link": x.max_link, "invite_link": deep_link(f"staff_{x.invite_code}"),
-            # личная ссылка руководителя на его экран (/m/<код>); код видит только HR — /api/meta закрыт токеном панели
-            "code": x.invite_code if x.role == "manager" else None}
+    return {
+        "id": x.id,
+        "name": x.name,
+        "role": x.role,
+        "site_code": x.site_code,
+        "max_connected": bool(x.max_user_id),
+        "max_link": x.max_link,
+        "invite_link": deep_link(f"staff_{x.invite_code}"),
+        # личная ссылка руководителя на его экран (/m/<код>); код видит только HR — /api/meta закрыт токеном панели
+        "code": x.invite_code if x.role == "manager" else None,
+    }
 
 
 def deep_link(payload: str) -> str | None:
@@ -137,13 +155,26 @@ class EmployeeIn(BaseModel):
 
 def employee_view(e: Employee) -> dict:
     return {
-        "id": e.id, "full_name": e.full_name, "first_name": e.first_name, "position": e.position, "department": e.department,
-        "site_code": e.site_code, "start_date": e.start_date.isoformat(), "probation_end": e.probation_end.isoformat(),
-        "manager": e.manager.name if e.manager else None, "manager_id": e.manager_id,
-        "recruiter": e.recruiter.name if e.recruiter else None, "recruiter_id": e.recruiter_id,
-        "address_form": e.address_form, "channel": e.channel, "status": e.status, "stage": metrics.stage(e),
-        "invite_code": e.invite_code, "invite_link": deep_link(e.invite_code),
-        "survey": (e.state or {}).get("survey"), "in_dialog_with_hr": bool((e.state or {}).get("ticket_id")),
+        "id": e.id,
+        "full_name": e.full_name,
+        "first_name": e.first_name,
+        "position": e.position,
+        "department": e.department,
+        "site_code": e.site_code,
+        "start_date": e.start_date.isoformat(),
+        "probation_end": e.probation_end.isoformat(),
+        "manager": e.manager.name if e.manager else None,
+        "manager_id": e.manager_id,
+        "recruiter": e.recruiter.name if e.recruiter else None,
+        "recruiter_id": e.recruiter_id,
+        "address_form": e.address_form,
+        "channel": e.channel,
+        "status": e.status,
+        "stage": metrics.stage(e),
+        "invite_code": e.invite_code,
+        "invite_link": deep_link(e.invite_code),
+        "survey": (e.state or {}).get("survey"),
+        "in_dialog_with_hr": bool((e.state or {}).get("ticket_id")),
     }
 
 
@@ -155,13 +186,18 @@ async def list_employees(s: AsyncSession = Depends(get_session)):
 
     signals = await metrics.risk_signals(s, datetime.now(ZoneInfo("UTC")) - timedelta(days=30))
     open_t = {r for r in await s.scalars(select(Ticket.employee_id).where(Ticket.status == "open"))}
-    return [{**employee_view(e), "signals": len(signals.get(e.id, [])), "open_ticket": e.id in open_t} for e in emps]
+    return [
+        {**employee_view(e), "signals": len(signals.get(e.id, [])), "open_ticket": e.id in open_t}
+        for e in emps
+    ]
 
 
 @router.post("/employees")
 async def create_employee(body: EmployeeIn, s: AsyncSession = Depends(get_session)):
     data = body.model_dump()
-    data["first_name"] = data["first_name"] or body.full_name.split()[1 if len(body.full_name.split()) > 1 else 0]
+    data["first_name"] = (
+        data["first_name"] or body.full_name.split()[1 if len(body.full_name.split()) > 1 else 0]
+    )
     data["probation_end"] = data["probation_end"] or add_months(body.start_date, settings().probation_months)
     e = Employee(**data, invite_code=secrets.token_urlsafe(9), state={})
     s.add(e)
@@ -209,12 +245,20 @@ async def employee_card(emp_id: int, s: AsyncSession = Depends(get_session)):
     job_by_step = {}
     for j in sorted(jobs, key=lambda j: j.id):
         job_by_step[j.ref] = j
-    sent_steps = set(await s.scalars(select(Message.step_id).where(Message.employee_id == emp_id, Message.step_id.is_not(None))))
+    sent_steps = set(
+        await s.scalars(
+            select(Message.step_id).where(Message.employee_id == emp_id, Message.step_id.is_not(None))
+        )
+    )
     waiting = progress.required_step(e)
     tl = []
     for st, run_at in timeline(e):
         j = job_by_step.get(st["id"])
-        status = "sent" if st["id"] in sent_steps else (j.status if j else ("manual" if st.get("manual") else "skipped"))
+        status = (
+            "sent"
+            if st["id"] in sent_steps
+            else (j.status if j else ("manual" if st.get("manual") else "skipped"))
+        )
         status_note = None
         if j and j.status in ("skipped", "await_start"):
             status, status_note = j.status, j.error
@@ -227,24 +271,66 @@ async def employee_card(emp_id: int, s: AsyncSession = Depends(get_session)):
         if st["id"] == "welcome" and e.status == "invited":
             status = "await_start"
         first = (st.get("messages") or [{}])[0]
-        tl.append({"step_id": st["id"], "title": st.get("title", st["id"]), "phase": phase_of(st.get("at")),
-                   "run_at": run_at.isoformat() if run_at else None,
-                   "manual": st.get("manual", False), "audience": st.get("audience", "employee"), "status": status,
-                   "status_note": status_note,
-                   "preview": render(first.get("text") or first.get("ai") or "", e)[:160]})
-    answers = (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.employee_id == emp_id).order_by(SurveyAnswer.id))).all()
+        tl.append(
+            {
+                "step_id": st["id"],
+                "title": st.get("title", st["id"]),
+                "phase": phase_of(st.get("at")),
+                "run_at": run_at.isoformat() if run_at else None,
+                "manual": st.get("manual", False),
+                "audience": st.get("audience", "employee"),
+                "status": status,
+                "status_note": status_note,
+                "preview": render(first.get("text") or first.get("ai") or "", e)[:160],
+            }
+        )
+    answers = (
+        await s.scalars(
+            select(SurveyAnswer).where(SurveyAnswer.employee_id == emp_id).order_by(SurveyAnswer.id)
+        )
+    ).all()
     survey_groups = answers_view(e, answers)
-    analyses = (await s.scalars(select(Analysis).where(Analysis.employee_id == emp_id).order_by(Analysis.id.desc()))).all()
-    tickets = (await s.scalars(select(Ticket).where(Ticket.employee_id == emp_id).order_by(Ticket.id.desc()))).all()
-    notes = (await s.scalars(select(Message).where(Message.employee_id == emp_id, Message.author.like("to_%")).order_by(Message.id.desc()))).all()
+    analyses = (
+        await s.scalars(select(Analysis).where(Analysis.employee_id == emp_id).order_by(Analysis.id.desc()))
+    ).all()
+    tickets = (
+        await s.scalars(select(Ticket).where(Ticket.employee_id == emp_id).order_by(Ticket.id.desc()))
+    ).all()
+    notes = (
+        await s.scalars(
+            select(Message)
+            .where(Message.employee_id == emp_id, Message.author.like("to_%"))
+            .order_by(Message.id.desc())
+        )
+    ).all()
     return {
         "employee": employee_view(e),
         "timeline": sorted(tl, key=lambda x: x["run_at"] or ""),
         "surveys": survey_groups,
-        "analyses": [{"text": a.text, "sentiment": a.sentiment, "emotions": a.emotions, "topics": a.topics, "risk_flags": a.risk_flags,
-                      "severity": a.severity, "summary": a.summary, "source": a.source, "at": a.created_at.isoformat()} for a in analyses],
+        "analyses": [
+            {
+                "text": a.text,
+                "sentiment": a.sentiment,
+                "emotions": a.emotions,
+                "topics": a.topics,
+                "risk_flags": a.risk_flags,
+                "severity": a.severity,
+                "summary": a.summary,
+                "source": a.source,
+                "at": a.created_at.isoformat(),
+            }
+            for a in analyses
+        ],
         "tickets": [ticket_view(t) for t in tickets],
-        "notifications": [{"to": m.author[3:], "text": m.text, "delivered": m.payload.get("delivered"), "at": m.created_at.isoformat()} for m in notes],
+        "notifications": [
+            {
+                "to": m.author[3:],
+                "text": m.text,
+                "delivered": m.payload.get("delivered"),
+                "at": m.created_at.isoformat(),
+            }
+            for m in notes
+        ],
     }
 
 
@@ -273,11 +359,21 @@ def answers_view(e: Employee, answers: list[SurveyAnswer]) -> list[dict]:
             q = next((x for x in sd.get("questions", []) if x["id"] == a.question_id), {})
             title, question = sd.get("title", a.survey_id), render(q.get("text", a.question_id), e)
         v = a.value or {}
-        concern = a.flagged or ("score" in v and v["score"] < q.get("comment_below", 0)) or (
-            q.get("type") == "yesno" and v.get("answer") == q.get("comment_on"))
+        concern = (
+            a.flagged
+            or ("score" in v and v["score"] < q.get("comment_below", 0))
+            or (q.get("type") == "yesno" and v.get("answer") == q.get("comment_on"))
+        )
         g = groups.setdefault(title, {"title": title, "at": a.created_at.isoformat(), "items": []})
-        g["items"].append({"question": question, "answer": answer_label(v), "comment": a.comment, "concern": bool(concern),
-                           "flag": v.get("flag")})
+        g["items"].append(
+            {
+                "question": question,
+                "answer": answer_label(v),
+                "comment": a.comment,
+                "concern": bool(concern),
+                "flag": v.get("flag"),
+            }
+        )
     return list(groups.values())
 
 
@@ -287,8 +383,18 @@ def answers_view(e: Employee, answers: list[SurveyAnswer]) -> list[dict]:
 # Роль «Руководитель» в панели HR показывает этот же ответ сервера.
 
 manager_router = APIRouter(prefix="/api/m")
-MANAGER_FIELDS = ("id", "full_name", "first_name", "position", "department", "site_code", "start_date", "probation_end",
-                  "status", "stage")
+MANAGER_FIELDS = (
+    "id",
+    "full_name",
+    "first_name",
+    "position",
+    "department",
+    "site_code",
+    "start_date",
+    "probation_end",
+    "status",
+    "stage",
+)
 
 
 def manager_view(e: Employee) -> dict:
@@ -306,7 +412,11 @@ async def _manager(s: AsyncSession, code: str) -> Staff:
 @manager_router.get("/{code}")
 async def manager_home(code: str, s: AsyncSession = Depends(get_session)):
     m = await _manager(s, code)
-    emps = (await s.scalars(select(Employee).where(Employee.manager_id == m.id).order_by(Employee.start_date.desc()))).all()
+    emps = (
+        await s.scalars(
+            select(Employee).where(Employee.manager_id == m.id).order_by(Employee.start_date.desc())
+        )
+    ).all()
     return {"manager": m.name, "employees": [manager_view(e) for e in emps]}
 
 
@@ -320,23 +430,44 @@ async def manager_card(code: str, emp_id: int, s: AsyncSession = Depends(get_ses
     from datetime import UTC, datetime, timedelta
 
     since = datetime.now(UTC) - timedelta(days=90)
-    flagged = (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.employee_id == emp_id, SurveyAnswer.flagged,
-                                                          SurveyAnswer.created_at >= since))).all()
-    analyses = (await s.scalars(select(Analysis).where(Analysis.employee_id == emp_id, Analysis.created_at >= since,
-                                                       Analysis.severity != "low"))).all()
-    topics = manager_topics([[a.value.get("flag")] for a in flagged] + [a.risk_flags or [] for a in analyses],
-                            scenario()["analytics"])
+    flagged = (
+        await s.scalars(
+            select(SurveyAnswer).where(
+                SurveyAnswer.employee_id == emp_id, SurveyAnswer.flagged, SurveyAnswer.created_at >= since
+            )
+        )
+    ).all()
+    analyses = (
+        await s.scalars(
+            select(Analysis).where(
+                Analysis.employee_id == emp_id, Analysis.created_at >= since, Analysis.severity != "low"
+            )
+        )
+    ).all()
+    topics = manager_topics(
+        [[a.value.get("flag")] for a in flagged] + [a.risk_flags or [] for a in analyses],
+        scenario()["analytics"],
+    )
     upcoming = [
         {"title": st.get("title", st["id"]), "run_at": run_at.isoformat()}
         for st, run_at in timeline(e)
         if run_at and st.get("audience", "employee") == "employee" and run_at > datetime.now(UTC)
     ][:4]
-    notes = (await s.scalars(select(Message).where(Message.employee_id == emp_id, Message.author == "to_manager").order_by(Message.id.desc()))).all()
+    notes = (
+        await s.scalars(
+            select(Message)
+            .where(Message.employee_id == emp_id, Message.author == "to_manager")
+            .order_by(Message.id.desc())
+        )
+    ).all()
     return {
         "employee": manager_view(e),
         "signals": topics,
         "upcoming": upcoming,
-        "notifications": [{"text": n.text, "delivered": n.payload.get("delivered"), "at": n.created_at.isoformat()} for n in notes],
+        "notifications": [
+            {"text": n.text, "delivered": n.payload.get("delivered"), "at": n.created_at.isoformat()}
+            for n in notes
+        ],
     }
 
 
@@ -350,7 +481,9 @@ async def employee_qr(emp_id: int, s: AsyncSession = Depends(get_session)):
 
 
 @router.post("/employees/{emp_id}/steps/{step_id}/run")
-async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File(None), s: AsyncSession = Depends(get_session)):
+async def run_step_now(
+    emp_id: int, step_id: str, file: UploadFile | None = File(None), s: AsyncSession = Depends(get_session)
+):
     """Запуск шага вручную: «по отмашке рекрутера» (ТЗ) или перемотка таймлайна в демо."""
     e = await _emp(s, emp_id)
     if step(step_id, e.site_code) is None:
@@ -358,8 +491,12 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
     # Не ждём свободного исполнителя: задержанный двойной клик нельзя считать намеренным повтором.
     if scheduler._job_slots.locked():
         raise HTTPException(409, "Сейчас выполняются другие отправки. Подождите и повторите.")
-    async with (scheduler._job_slots, scheduler.session() as guard, guard.begin(),
-                scheduler.employee_owner(guard, emp_id) as owned):
+    async with (
+        scheduler._job_slots,
+        scheduler.session() as guard,
+        guard.begin(),
+        scheduler.employee_owner(guard, emp_id) as owned,
+    ):
         if not owned:
             raise HTTPException(409, "Сейчас уже отправляется другой шаг. Дождитесь завершения и повторите.")
         await s.refresh(e)  # диалог мог изменить состояние, пока ожидали локальную блокировку
@@ -371,16 +508,26 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
             await backlog.check_order(s, e, current_step)
         except (StepBlocked, backlog.StepSkipped) as exc:
             raise HTTPException(409, str(exc)) from exc
-        j = await s.scalar(select(Job).where(
-            Job.employee_id == emp_id, Job.kind == "step", Job.ref == step_id,
-            Job.status.in_(["pending", "running", "blocked"]),
-        ).order_by(Job.run_at, Job.id))
+        j = await s.scalar(
+            select(Job)
+            .where(
+                Job.employee_id == emp_id,
+                Job.kind == "step",
+                Job.ref == step_id,
+                Job.status.in_(["pending", "running", "blocked"]),
+            )
+            .order_by(Job.run_at, Job.id)
+        )
         if j:
-            if not await guard.scalar(select(func.pg_try_advisory_xact_lock(scheduler.JOB_LOCK_NAMESPACE, j.id))):
+            if not await guard.scalar(
+                select(func.pg_try_advisory_xact_lock(scheduler.JOB_LOCK_NAMESPACE, j.id))
+            ):
                 raise HTTPException(409, "Этот шаг уже запускается. Дождитесь завершения и повторите.")
             await s.refresh(j)
             if j.status == "running" or j.attempts:
-                raise HTTPException(409, "Предыдущая отправка ещё обрабатывается. Проверьте её состояние перед повтором.")
+                raise HTTPException(
+                    409, "Предыдущая отправка ещё обрабатывается. Проверьте её состояние перед повтором."
+                )
         else:
             j = Job(employee_id=emp_id, kind="step", ref=step_id, run_at=scheduler.utcnow())
             s.add(j)
@@ -399,7 +546,10 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
         if j.status in ("blocked", "skipped", "await_start"):
             raise HTTPException(409, j.error)
         if j.status != "done":
-            raise HTTPException(503, "Отправка не завершена. Задача сохранена для автоматического повтора; проверьте её состояние позже.")
+            raise HTTPException(
+                503,
+                "Отправка не завершена. Задача сохранена для автоматического повтора; проверьте её состояние позже.",
+            )
     return {"ok": True}
 
 
@@ -407,9 +557,19 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
 
 
 def ticket_view(t: Ticket) -> dict:
-    return {"id": t.id, "kind": t.kind, "status": t.status, "severity": t.severity, "subject": t.subject, "summary": t.summary,
-            "employee_id": t.employee_id, "employee": t.employee.full_name, "site": t.employee.site_code,
-            "created_at": t.created_at.isoformat(), "closed_at": t.closed_at.isoformat() if t.closed_at else None}
+    return {
+        "id": t.id,
+        "kind": t.kind,
+        "status": t.status,
+        "severity": t.severity,
+        "subject": t.subject,
+        "summary": t.summary,
+        "employee_id": t.employee_id,
+        "employee": t.employee.full_name,
+        "site": t.employee.site_code,
+        "created_at": t.created_at.isoformat(),
+        "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+    }
 
 
 @router.get("/tickets")
@@ -430,14 +590,29 @@ async def _ticket(s: AsyncSession, tid: int) -> Ticket:
 @router.get("/tickets/{tid}")
 async def get_ticket(tid: int, s: AsyncSession = Depends(get_session)):
     t = await _ticket(s, tid)
-    msgs = (await s.scalars(
-        select(Message).where(Message.employee_id == t.employee_id, Message.author.in_(["employee", "bot", "hr"]),
-                              Message.created_at >= t.created_at).order_by(Message.id)
-    )).all()
-    before = (await s.scalars(
-        select(Message).where(Message.employee_id == t.employee_id, Message.author.in_(["employee", "bot", "hr"]),
-                              Message.created_at < t.created_at).order_by(Message.id.desc()).limit(8)
-    )).all()
+    msgs = (
+        await s.scalars(
+            select(Message)
+            .where(
+                Message.employee_id == t.employee_id,
+                Message.author.in_(["employee", "bot", "hr"]),
+                Message.created_at >= t.created_at,
+            )
+            .order_by(Message.id)
+        )
+    ).all()
+    before = (
+        await s.scalars(
+            select(Message)
+            .where(
+                Message.employee_id == t.employee_id,
+                Message.author.in_(["employee", "bot", "hr"]),
+                Message.created_at < t.created_at,
+            )
+            .order_by(Message.id.desc())
+            .limit(8)
+        )
+    ).all()
     return {**ticket_view(t), "messages": [message_view(m) for m in [*reversed(before), *msgs]]}
 
 
@@ -467,8 +642,16 @@ async def close_ticket(tid: int, s: AsyncSession = Depends(get_session)):
 
 
 def doc_view(d: Document) -> dict:
-    return {"id": d.id, "title": d.title, "filename": d.filename, "site_codes": d.site_codes, "status": d.status,
-            "error": d.error, "n_chunks": d.n_chunks, "created_at": d.created_at.isoformat()}
+    return {
+        "id": d.id,
+        "title": d.title,
+        "filename": d.filename,
+        "site_codes": d.site_codes,
+        "status": d.status,
+        "error": d.error,
+        "n_chunks": d.n_chunks,
+        "created_at": d.created_at.isoformat(),
+    }
 
 
 @router.get("/documents")
@@ -483,7 +666,14 @@ async def upload_document(file: UploadFile = File(...), title: str = Form(""), s
 
     async def job():
         async with session() as s:
-            await ingest.ingest(s, file.filename, data, title or file.filename.rsplit(".", 1)[0], site_codes, settings().chunk_max_chars)
+            await ingest.ingest(
+                s,
+                file.filename,
+                data,
+                title or file.filename.rsplit(".", 1)[0],
+                site_codes,
+                settings().chunk_max_chars,
+            )
 
     asyncio.create_task(job())
     return {"ok": True}
@@ -513,8 +703,20 @@ async def rag_debug(body: DebugIn, s: AsyncSession = Depends(get_session)):
     hits = await search(s, body.question, body.site, top_n=10)
     res = await rag_answer(s, body.question, body.site)
     return {
-        "hits": [{"chunk_id": h.chunk_id, "title": h.title, "heading": h.heading, "text": h.text[:600], "score": round(h.score, 4)} for h in hits],
-        "answered": res.answered, "answer": res.text, "reason": res.reason, "sources": res.sources,
+        "hits": [
+            {
+                "chunk_id": h.chunk_id,
+                "title": h.title,
+                "heading": h.heading,
+                "text": h.text[:600],
+                "score": round(h.score, 4),
+            }
+            for h in hits
+        ],
+        "answered": res.answered,
+        "answer": res.text,
+        "reason": res.reason,
+        "sources": res.sources,
         "threshold": settings().rerank_min_score,
     }
 
@@ -524,8 +726,19 @@ async def list_questions(answered: bool | None = None, s: AsyncSession = Depends
     q = select(Question).order_by(Question.id.desc()).limit(200)
     if answered is not None:
         q = q.where(Question.answered == answered)
-    return [{"id": x.id, "text": x.text, "answered": x.answered, "reason": x.reason, "score": x.best_score, "topic": x.topic,
-             "feedback": x.feedback, "at": x.created_at.isoformat()} for x in (await s.scalars(q)).all()]
+    return [
+        {
+            "id": x.id,
+            "text": x.text,
+            "answered": x.answered,
+            "reason": x.reason,
+            "score": x.best_score,
+            "topic": x.topic,
+            "feedback": x.feedback,
+            "at": x.created_at.isoformat(),
+        }
+        for x in (await s.scalars(q)).all()
+    ]
 
 
 # --- аналитика ---------------------------------------------------------------------------------------
@@ -539,7 +752,16 @@ async def dashboard(s: AsyncSession = Depends(get_session)):
 @router.get("/digests")
 async def list_digests(s: AsyncSession = Depends(get_session)):
     rows = (await s.scalars(select(Digest).order_by(Digest.id.desc()).limit(10))).all()
-    return [{"id": d.id, "period": d.stats.get("period"), "text": d.text, "stats": d.stats, "created_at": d.created_at.isoformat()} for d in rows]
+    return [
+        {
+            "id": d.id,
+            "period": d.stats.get("period"),
+            "text": d.text,
+            "stats": d.stats,
+            "created_at": d.created_at.isoformat(),
+        }
+        for d in rows
+    ]
 
 
 @router.post("/digests/run")
@@ -558,10 +780,22 @@ async def get_step(step_id: str, sites: str = ""):
     want = sorted(x for x in sites.split(",") if x)
     for st in scenario()["steps"]:
         if st["id"] == step_id and sorted(st.get("sites", [])) == want:
-            return {"id": st["id"], "title": st.get("title", st["id"]), "sites": st.get("sites", []),
-                    "messages": [{"index": i, "text": m.get("text"), "ai": m.get("ai"), "survey": m.get("survey"),
-                                  "image": m.get("image"), "buttons": [b.get("text") for row in button_rows(m.get("buttons")) for b in row]}
-                                 for i, m in enumerate(st.get("messages", []))]}
+            return {
+                "id": st["id"],
+                "title": st.get("title", st["id"]),
+                "sites": st.get("sites", []),
+                "messages": [
+                    {
+                        "index": i,
+                        "text": m.get("text"),
+                        "ai": m.get("ai"),
+                        "survey": m.get("survey"),
+                        "image": m.get("image"),
+                        "buttons": [b.get("text") for row in button_rows(m.get("buttons")) for b in row],
+                    }
+                    for i, m in enumerate(st.get("messages", []))
+                ],
+            }
     raise HTTPException(404)
 
 

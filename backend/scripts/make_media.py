@@ -73,11 +73,27 @@ def card(name: str, title: str, subtitle: str, seed: int) -> None:
     img = background(seed)
     d = ImageDraw.Draw(img)
     paw(d, 140, 190, 46)
-    d.text((80, 300), "\n".join(textwrap.wrap(title, 20)), font=ImageFont.truetype(FONT_BOLD, 64), fill=WHITE, spacing=10)
+    d.text(
+        (80, 300),
+        "\n".join(textwrap.wrap(title, 20)),
+        font=ImageFont.truetype(FONT_BOLD, 64),
+        fill=WHITE,
+        spacing=10,
+    )
     lines = textwrap.wrap(subtitle, 34)
-    d.text((80, 300 + 80 * len(textwrap.wrap(title, 20)) + 20), "\n".join(lines), font=ImageFont.truetype(FONT, 34), fill=LIME, spacing=8)
-    d.text((80, H - 60), "Корсик · Группа ПОЛИПЛАСТИК · шаблон изображения, сгенерирован автоматически",
-           font=ImageFont.truetype(FONT, 18), fill=(150, 190, 200))
+    d.text(
+        (80, 300 + 80 * len(textwrap.wrap(title, 20)) + 20),
+        "\n".join(lines),
+        font=ImageFont.truetype(FONT, 34),
+        fill=LIME,
+        spacing=8,
+    )
+    d.text(
+        (80, H - 60),
+        "Корсик · Группа ПОЛИПЛАСТИК · шаблон изображения, сгенерирован автоматически",
+        font=ImageFont.truetype(FONT, 18),
+        fill=(150, 190, 200),
+    )
     img.save(OUT / name)
 
 

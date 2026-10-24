@@ -36,20 +36,41 @@ async def db(monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with engine.begin() as c:
-            await c.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[
-                Site.__table__, Staff.__table__, Employee.__table__, Job.__table__, StepAttachment.__table__,
-            ]))
+            await c.run_sync(
+                lambda conn: Base.metadata.create_all(
+                    conn,
+                    tables=[
+                        Site.__table__,
+                        Staff.__table__,
+                        Employee.__table__,
+                        Job.__table__,
+                        StepAttachment.__table__,
+                    ],
+                )
+            )
+
         @asynccontextmanager
         async def session():
             async with factory() as s:
                 yield s
+
         monkeypatch.setattr(scheduler, "session", session)
         monkeypatch.setattr(scheduler, "_job_slots", asyncio.Semaphore(2))
         async with factory() as s:
             s.add(Site(code="GTP", name="Демо", kind="plant"))
             await s.flush()
-            s.add(Employee(id=1, full_name="Демо Иван Петров", first_name="Иван", site_code="GTP",
-                           status="active", start_date=date(2026, 10, 26), probation_end=date(2027, 1, 26), invite_code="demo"))
+            s.add(
+                Employee(
+                    id=1,
+                    full_name="Демо Иван Петров",
+                    first_name="Иван",
+                    site_code="GTP",
+                    status="active",
+                    start_date=date(2026, 10, 26),
+                    probation_end=date(2027, 1, 26),
+                    invite_code="demo",
+                )
+            )
             await s.commit()
         yield SimpleNamespace(session=factory, schema=schema, url=url)
     finally:
@@ -61,8 +82,19 @@ async def db(monkeypatch):
 
 async def job(db, **kw):
     async with db.session() as s:
-        j = Job(**({"employee_id": 1, "kind": "step", "ref": "welcome", "run_at": scheduler.utcnow(),
-                    "status": "pending", "attempts": 0} | kw))
+        j = Job(
+            **(
+                {
+                    "employee_id": 1,
+                    "kind": "step",
+                    "ref": "welcome",
+                    "run_at": scheduler.utcnow(),
+                    "status": "pending",
+                    "attempts": 0,
+                }
+                | kw
+            )
+        )
         s.add(j)
         await s.commit()
         return j.id
@@ -72,7 +104,11 @@ async def job(db, **kw):
 @pytest.mark.parametrize("kind", ["step", "reminder", "digest"])
 async def test_dispatch_and_completed_job_is_not_repeated(db, monkeypatch, kind):
     handler = AsyncMock()
-    module, name = {"step": (scenario, "run_step"), "reminder": (surveys, "remind"), "digest": (digest, "run")}[kind]
+    module, name = {
+        "step": (scenario, "run_step"),
+        "reminder": (surveys, "remind"),
+        "digest": (digest, "run"),
+    }[kind]
     monkeypatch.setattr(module, name, handler)
     jid = await job(db, kind=kind, employee_id=None if kind == "digest" else 1)
     assert await scheduler.run_job(jid)
@@ -89,10 +125,12 @@ async def test_dispatch_and_completed_job_is_not_repeated(db, monkeypatch, kind)
 async def test_commit_does_not_release_job_or_employee_ownership(db, monkeypatch):
     first, second = await job(db), await job(db)
     started, release = asyncio.Event(), asyncio.Event()
+
     async def handle(s, *a):
         await s.commit()  # обработчики сценария сохраняют сообщения по ходу выполнения
         started.set()
         await release.wait()
+
     monkeypatch.setattr(scenario, "run_step", handle)
     worker = asyncio.create_task(scheduler.run_job(first))
     try:
@@ -108,9 +146,11 @@ async def test_commit_does_not_release_job_or_employee_ownership(db, monkeypatch
 @pytest.mark.asyncio
 async def test_retry_exhaustion_does_not_strand_other_jobs(db, monkeypatch):
     bad, good = await job(db, ref="bad"), await job(db, ref="good")
+
     async def handle(s, emp, ref):
         if ref == "bad":
             raise RuntimeError("test failure")
+
     monkeypatch.setattr(scenario, "run_step", handle)
     assert await scheduler.tick() == 2
     async with db.session() as s:
@@ -132,6 +172,7 @@ async def test_digest_creation_is_serialized(db):
     async def ensure():
         async with db.session() as s:
             await scheduler.ensure_digest_job(s)
+
     await asyncio.gather(ensure(), ensure())
     async with db.session() as s:
         jobs = list(await s.scalars(select(Job)))
@@ -160,18 +201,21 @@ async def handle(s, *a):
 scheduler.session, scenario.run_step = session, handle
 asyncio.run(scheduler.run_job(int(sys.argv[3])))
 """
-    proc = await asyncio.create_subprocess_exec(sys.executable, "-c", script, db.url, db.schema, str(jid),
-                                               stdout=asyncio.subprocess.PIPE)
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script, db.url, db.schema, str(jid), stdout=asyncio.subprocess.PIPE
+    )
     try:
         assert await asyncio.wait_for(proc.stdout.readline(), timeout=10) == b"running\n"
         assert not await scheduler.run_job(jid)
         # Старт второго планировщика не сбрасывает состояние активного первого.
         checked = asyncio.Event()
+
         async def check_tick():
             async with db.session() as s:
                 assert (await s.get(Job, jid)).status == "running"
             checked.set()
             await asyncio.Event().wait()
+
         monkeypatch.setattr(scheduler, "tick", check_tick)
         loop = asyncio.create_task(scheduler.loop())
         try:
@@ -186,9 +230,11 @@ asyncio.run(scheduler.run_job(int(sys.argv[3])))
         await proc.wait()
     handler = AsyncMock()
     monkeypatch.setattr(scenario, "run_step", handler)
+
     async def recover():
         while not await scheduler.run_job(jid):
-            await asyncio.sleep(.01)  # PostgreSQL должен заметить закрытие сокета убитого процесса
+            await asyncio.sleep(0.01)  # PostgreSQL должен заметить закрытие сокета убитого процесса
+
     await asyncio.wait_for(recover(), timeout=5)
     handler.assert_awaited_once()
     async with db.session() as s:
@@ -201,21 +247,27 @@ async def test_demo_next_is_durable_and_does_not_advance_while_running(db, monke
     first = await job(db, run_at=scheduler.utcnow() + timedelta(days=1))
     second = await job(db, run_at=scheduler.utcnow() + timedelta(days=2))
     started, release, finished = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
     async def handle(*a):
         started.set()
         await release.wait()
+
     async def run(jid):
         if await scheduler.run_job(jid):
             finished.set()
+
     async def get_session():
         async with db.session() as s:
             yield s
+
     monkeypatch.setattr(scenario, "run_step", handle)
     monkeypatch.setattr(demo, "run_job", run)
     main.app.dependency_overrides[demo.get_session] = get_session
     main.app.dependency_overrides[demo.auth] = lambda: None
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as api:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=main.app), base_url="http://test"
+        ) as api:
             assert not await scheduler.run_job(first)  # без перемотки будущий шаг не выполняется
             request = asyncio.create_task(api.post("/api/demo/employees/1/next"))
             try:
@@ -277,10 +329,12 @@ async def test_manual_request_cannot_overlap_scheduler(db, monkeypatch):
     jid = await job(db)
     started, release = asyncio.Event(), asyncio.Event()
     calls = []
+
     async def scheduled(*args):
         calls.append(args)
         started.set()
         await release.wait()
+
     monkeypatch.setattr(scenario, "run_step", scheduled)
     worker = asyncio.create_task(scheduler.run_job(jid))
     try:
@@ -303,11 +357,14 @@ async def manual_api(db, monkeypatch, tmp_path):
     async def get_session():
         async with db.session() as s:
             yield s
+
     monkeypatch.setattr(settings(), "media_dir", tmp_path)
     main.app.dependency_overrides[admin.get_session] = get_session
     main.app.dependency_overrides[admin.auth] = lambda: None
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as api:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=main.app), base_url="http://test"
+        ) as api:
             yield api
     finally:
         main.app.dependency_overrides.clear()
@@ -320,11 +377,13 @@ async def test_manual_owns_step_and_file_until_completion(db, manual_api, monkey
     jid = await job(db, ref="d3_plan", run_at=scheduler.utcnow() + timedelta(days=1))
     started, release = asyncio.Event(), asyncio.Event()
     calls = []
+
     async def handle(s, emp, ref):
         calls.append(ref)
         await s.commit()
         started.set()
         await release.wait()
+
     send = AsyncMock()
     monkeypatch.setattr(scenario, "run_step", handle)
     monkeypatch.setattr(channels, "send", send)
@@ -384,8 +443,11 @@ async def test_manual_failure_retains_file_for_scheduler_retry(db, manual_api, m
 
 @pytest.mark.asyncio
 async def test_manual_validates_employee_and_site_step_before_saving_file(db, manual_api, tmp_path):
-    for url in ["/api/employees/999/steps/d3_plan/run", "/api/employees/1/steps/not-a-step/run",
-                "/api/employees/1/steps/d1_end/run"]:
+    for url in [
+        "/api/employees/999/steps/d3_plan/run",
+        "/api/employees/1/steps/not-a-step/run",
+        "/api/employees/1/steps/d1_end/run",
+    ]:
         assert (await manual_api.post(url, files={"file": ("plan.pdf", b"unused")})).status_code == 404
     assert not list(tmp_path.iterdir())
     async with db.session() as s:
@@ -393,16 +455,21 @@ async def test_manual_validates_employee_and_site_step_before_saving_file(db, ma
 
 
 @pytest.mark.asyncio
-async def test_interrupted_manual_request_keeps_recoverable_job_and_attachment(db, manual_api, monkeypatch, tmp_path):
+async def test_interrupted_manual_request_keeps_recoverable_job_and_attachment(
+    db, manual_api, monkeypatch, tmp_path
+):
     from app import channels
 
     started = asyncio.Event()
+
     async def handle(*args):
         started.set()
         await asyncio.Event().wait()
+
     monkeypatch.setattr(scenario, "run_step", handle)
-    worker = asyncio.create_task(manual_api.post("/api/employees/1/steps/d3_plan/run",
-                                                files={"file": ("plan.pdf", b"recover me")}))
+    worker = asyncio.create_task(
+        manual_api.post("/api/employees/1/steps/d3_plan/run", files={"file": ("plan.pdf", b"recover me")})
+    )
     try:
         await asyncio.wait_for(started.wait(), timeout=5)
     finally:
@@ -427,8 +494,10 @@ async def test_interrupted_manual_request_keeps_recoverable_job_and_attachment(d
 @pytest.mark.asyncio
 async def test_busy_executor_does_not_queue_a_late_manual_duplicate(db, manual_api, tmp_path):
     async with scheduler._job_slots, scheduler._job_slots:
-        r = await asyncio.wait_for(manual_api.post("/api/employees/1/steps/d3_plan/run",
-                                                  files={"file": ("plan.pdf", b"unused")}), timeout=5)
+        r = await asyncio.wait_for(
+            manual_api.post("/api/employees/1/steps/d3_plan/run", files={"file": ("plan.pdf", b"unused")}),
+            timeout=5,
+        )
         assert r.status_code == 409
     assert not list(tmp_path.iterdir())
     async with db.session() as s:

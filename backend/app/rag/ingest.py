@@ -99,7 +99,11 @@ async def pptx_markdown(data: bytes) -> str:
 
         await walk(slide.shapes)
         title_shape = slide.shapes.title
-        title = title_shape.text_frame.text.strip() if title_shape is not None and title_shape.has_text_frame else ""
+        title = (
+            title_shape.text_frame.text.strip()
+            if title_shape is not None and title_shape.has_text_frame
+            else ""
+        )
         title = " ".join((title or (texts[0] if texts else "")).split())[:120]
         parts.append(f"## Слайд {n}. {title}\n\n" + "\n\n".join(texts))
     return "\n\n".join(parts)
@@ -209,11 +213,21 @@ def strip_running_headers(md: str) -> str:
             continue
         # строка таблицы или «заголовок», повторившиеся на 3+ страницах, — колонтитул (в т.ч. с хвостом шума OCR).
         # Обычный текст не трогаем: «- выходные дни;» может законно встречаться в разных пунктах.
-        if key and stripped.startswith(("#", "|")) and (
-            key in running or stripped.startswith("#") and any(key.startswith(r) for r in running if len(r) > 8)
+        if (
+            key
+            and stripped.startswith(("#", "|"))
+            and (
+                key in running
+                or stripped.startswith("#")
+                and any(key.startswith(r) for r in running if len(r) > 8)
+            )
         ):
             continue
-        cells = {c.strip() for c in stripped.strip("|").split("|") if c.strip()} if stripped.startswith("|") else set()
+        cells = (
+            {c.strip() for c in stripped.strip("|").split("|") if c.strip()}
+            if stripped.startswith("|")
+            else set()
+        )
         if len(cells) == 1 and stripped.count("|") > 2:
             continue  # строка таблицы из одинаковых ячеек — артефакт объединённой шапки штампа
         if SEPARATOR.match(ln.strip()) and not (out and out[-1].strip().startswith("|")):
@@ -240,7 +254,10 @@ async def embed(texts: list[str]) -> list[list[float]]:
     out: list[list[float]] = []
     async with httpx.AsyncClient(timeout=300) as http:
         for i in range(0, len(texts), EMBED_BATCH):
-            r = await http.post(f"{settings().embed_url}/v1/embeddings", json={"input": texts[i : i + EMBED_BATCH], "model": "embed"})
+            r = await http.post(
+                f"{settings().embed_url}/v1/embeddings",
+                json={"input": texts[i : i + EMBED_BATCH], "model": "embed"},
+            )
             r.raise_for_status()
             out.extend(d["embedding"] for d in sorted(r.json()["data"], key=lambda d: d["index"]))
     return out
@@ -255,7 +272,9 @@ def chunk_for_embedding(heading: str, text: str) -> str:
 # --- пайплайн ----------------------------------------------------------------------------------------
 
 
-async def ingest(s: AsyncSession, filename: str, data: bytes, title: str, site_codes: list[str], max_chars: int) -> Document:
+async def ingest(
+    s: AsyncSession, filename: str, data: bytes, title: str, site_codes: list[str], max_chars: int
+) -> Document:
     sha = hashlib.sha256(data).hexdigest()
     doc = await s.scalar(select(Document).where(Document.sha256 == sha))
     if doc is None:

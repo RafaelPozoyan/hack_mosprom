@@ -35,9 +35,9 @@ def utcnow() -> datetime:
 async def employee_owner(guard, employee_id: int | None):
     from app.bot.updates import _locks
 
-    if employee_id and not await guard.scalar(select(
-        func.pg_try_advisory_xact_lock(EMPLOYEE_LOCK_NAMESPACE, employee_id)
-    )):
+    if employee_id and not await guard.scalar(
+        select(func.pg_try_advisory_xact_lock(EMPLOYEE_LOCK_NAMESPACE, employee_id))
+    ):
         yield False
         return
     async with _locks[employee_id] if employee_id else nullcontext():
@@ -56,17 +56,25 @@ async def run_job(job_id: int) -> bool:
             async with employee_owner(guard, job.employee_id) as owned:
                 if not owned:
                     return False
-                job = await s.scalar(select(Job).where(Job.id == job_id).with_for_update()
-                                     .execution_options(populate_existing=True))
+                job = await s.scalar(
+                    select(Job)
+                    .where(Job.id == job_id)
+                    .with_for_update()
+                    .execution_options(populate_existing=True)
+                )
                 if job is None or job.status not in ("pending", "running"):
                     return False
                 if job.status == "pending" and job.run_at > utcnow():
                     return False
-                if job.employee_id and await s.scalar(select(Job.id).where(
-                    Job.employee_id == job.employee_id,
-                    or_((Job.status == "pending") & (Job.run_at <= func.now()), Job.status == "running"),
-                    or_(Job.run_at < job.run_at, (Job.run_at == job.run_at) & (Job.id < job.id)),
-                ).limit(1)):
+                if job.employee_id and await s.scalar(
+                    select(Job.id)
+                    .where(
+                        Job.employee_id == job.employee_id,
+                        or_((Job.status == "pending") & (Job.run_at <= func.now()), Job.status == "running"),
+                        or_(Job.run_at < job.run_at, (Job.run_at == job.run_at) & (Job.id < job.id)),
+                    )
+                    .limit(1)
+                ):
                     return False
                 if job.attempts >= MAX_ATTEMPTS:
                     await _retry(s, job, "Обработка прервана до завершения последней попытки")
@@ -101,7 +109,9 @@ async def _execute(s, job: Job) -> None:
             await run_step(s, emp, job.ref)
             attachment = await s.get(StepAttachment, job.id)
             if attachment:
-                await channels.send(s, emp, OutMessage(text="📎 " + attachment.name, file=attachment.file), step_id=job.ref)
+                await channels.send(
+                    s, emp, OutMessage(text="📎 " + attachment.name, file=attachment.file), step_id=job.ref
+                )
         elif job.kind == "reminder" and emp:
             await surveys.remind(s, emp, job.ref)
         elif job.kind == "required_reminder" and emp:
@@ -136,9 +146,19 @@ async def _execute(s, job: Job) -> None:
 async def tick() -> int:
     async with session() as s:
         # Выбираем кандидатов, не захватываем пачку: авария не оставит остальные задачи running.
-        ids = list(await s.scalars(select(Job.id).where(or_(
-            (Job.status == "pending") & (Job.run_at <= func.now()), Job.status == "running",
-        )).order_by(Job.run_at, Job.id).limit(CANDIDATE_BATCH)))
+        ids = list(
+            await s.scalars(
+                select(Job.id)
+                .where(
+                    or_(
+                        (Job.status == "pending") & (Job.run_at <= func.now()),
+                        Job.status == "running",
+                    )
+                )
+                .order_by(Job.run_at, Job.id)
+                .limit(CANDIDATE_BATCH)
+            )
+        )
     executed = 0
     for job_id in ids:
         try:

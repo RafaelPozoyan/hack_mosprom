@@ -163,7 +163,9 @@ def step_date(at: dict, emp: Employee) -> date | None:
     if "probation_end" in at:
         return prev_workday(emp.probation_end)
     if any(k in at for k in ("days", "weeks", "months")):
-        d = add_months(start, at.get("months", 0)) + timedelta(days=at.get("days", 0), weeks=at.get("weeks", 0))
+        d = add_months(start, at.get("months", 0)) + timedelta(
+            days=at.get("days", 0), weeks=at.get("weeks", 0)
+        )
         return next_workday(d)
     return None
 
@@ -184,7 +186,15 @@ def step_run_at(at: dict, emp: Employee) -> datetime | None:
 # --- планирование ------------------------------------------------------------------------------------
 
 
-PHASES = ["Знакомство", "До выхода", "Первый день", "Первые дни", "Первый месяц", "Второй месяц", "Третий месяц и итоги"]
+PHASES = [
+    "Знакомство",
+    "До выхода",
+    "Первый день",
+    "Первые дни",
+    "Первый месяц",
+    "Второй месяц",
+    "Третий месяц и итоги",
+]
 
 
 def phase_of(at: dict | None) -> str:
@@ -225,9 +235,7 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
     waiting = {
         job.ref: job
         for job in await s.scalars(
-            select(Job).where(
-                Job.employee_id == emp.id, Job.kind == "step", Job.status == "await_start"
-            )
+            select(Job).where(Job.employee_id == emp.id, Job.kind == "step", Job.status == "await_start")
         )
     }
     await s.execute(
@@ -298,7 +306,9 @@ async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
         await run_step(s, emp, nxt)
 
 
-async def notify_audience(s: AsyncSession, emp: Employee, audience: str, text: str, step_id: str | None) -> None:
+async def notify_audience(
+    s: AsyncSession, emp: Employee, audience: str, text: str, step_id: str | None
+) -> None:
     """Push руководителю/рекрутеру: в MAX, если он подключён, и всегда — в журнал карточки сотрудника."""
     staff = emp.manager if audience == "manager" else emp.recruiter
     delivered = await channels.notify_staff(staff, OutMessage(text=f"🐾 Корсик · {emp.full_name}\n\n{text}"))

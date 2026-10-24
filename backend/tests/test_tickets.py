@@ -32,15 +32,24 @@ class FakeSession:
 
 @pytest.fixture
 def case(monkeypatch):
-    emp = SimpleNamespace(id=1, first_name="Анна", full_name="Иванова Анна", position="Инженер",
-                          site_code="GTP", address_form="vy", start_date=datetime(2026, 10, 26),
-                          state={"survey": {"id": "day3"}})
+    emp = SimpleNamespace(
+        id=1,
+        first_name="Анна",
+        full_name="Иванова Анна",
+        position="Инженер",
+        site_code="GTP",
+        address_form="vy",
+        start_date=datetime(2026, 10, 26),
+        state={"survey": {"id": "day3"}},
+    )
     ticket = SimpleNamespace(id=7, employee_id=1, employee=emp, kind="problem", status="open", closed_at=None)
     send, post, publish = AsyncMock(), AsyncMock(), Mock()
     monkeypatch.setattr(escalation.channels, "send", send)
     monkeypatch.setattr(escalation.channels, "post_hr_chat", post)
     monkeypatch.setattr(escalation.hub, "publish", publish)
-    return SimpleNamespace(ticket=ticket, emp=emp, session=FakeSession(ticket), send=send, post=post, publish=publish)
+    return SimpleNamespace(
+        ticket=ticket, emp=emp, session=FakeSession(ticket), send=send, post=post, publish=publish
+    )
 
 
 def api_request(s, path, body=None):
@@ -54,8 +63,9 @@ def api_request(s, path, body=None):
     app.dependency_overrides[get_session] = session_override
 
     async def request():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
-                                     base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+        ) as client:
             return await client.post(path, json=body or {})
 
     return asyncio.run(request())
@@ -81,7 +91,9 @@ def test_closed_ticket_reply_returns_conflict_without_side_effects(case):
 
 
 def test_reply_and_repeated_close_preserve_dialog_state(case):
-    assert api_request(case.session, "/api/tickets/7/reply", {"text": "Поможем с доступами"}).status_code == 200
+    assert (
+        api_request(case.session, "/api/tickets/7/reply", {"text": "Поможем с доступами"}).status_code == 200
+    )
     assert case.emp.state["ticket_id"] == 7
     assert case.send.await_args.kwargs["ticket_id"] == 7
     assert api_request(case.session, "/api/tickets/7/close").status_code == 200

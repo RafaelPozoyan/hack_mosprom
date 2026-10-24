@@ -55,7 +55,10 @@ async def _handoff(s: AsyncSession, emp: Employee, subject: str) -> Handoff:
                     "summary — суть в 1–2 предложениях без домыслов; suggested_action — что HR стоит сделать первым шагом. "
                     "Опирайся только на переписку.",
                 },
-                {"role": "user", "content": f"Обращение: {subject}\n\nПереписка (последние сообщения):\n{history}"},
+                {
+                    "role": "user",
+                    "content": f"Обращение: {subject}\n\nПереписка (последние сообщения):\n{history}",
+                },
             ],
             Handoff,
         )
@@ -64,9 +67,17 @@ async def _handoff(s: AsyncSession, emp: Employee, subject: str) -> Handoff:
         return Handoff(summary=subject[:500], suggested_action="Связаться с сотрудником")
 
 
-async def queue_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium") -> Ticket:
+async def queue_ticket(
+    s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium"
+) -> Ticket:
     """Добавить обращение и подготовку карточки в транзакцию вызывающего обработчика."""
-    t = Ticket(employee_id=emp.id, kind=kind, subject=subject, severity=severity, summary="ИИ готовит handoff-карточку…")
+    t = Ticket(
+        employee_id=emp.id,
+        kind=kind,
+        subject=subject,
+        severity=severity,
+        summary="ИИ готовит handoff-карточку…",
+    )
     s.add(t)
     await s.flush()
     # Без employee_id: подготовка резюме не должна удерживать блокировку диалога новичка.
@@ -74,7 +85,9 @@ async def queue_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, 
     return t
 
 
-async def create_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium") -> Ticket:
+async def create_ticket(
+    s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium"
+) -> Ticket:
     t = await queue_ticket(s, emp, kind, subject, severity)
     await s.commit()
     hub.publish(ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name})
@@ -88,7 +101,12 @@ async def finalize(s: AsyncSession, ticket_id: int) -> None:
         return
     card = await _handoff(s, t.employee, t.subject) if not t.hr_chat_mid else None
     # За время работы LLM обращение могли закрыть. Закрытие и публикация сериализованы по Ticket.
-    stmt = select(Ticket).where(Ticket.id == ticket_id).with_for_update(of=Ticket, key_share=True).execution_options(populate_existing=True)
+    stmt = (
+        select(Ticket)
+        .where(Ticket.id == ticket_id)
+        .with_for_update(of=Ticket, key_share=True)
+        .execution_options(populate_existing=True)
+    )
     t = await s.scalar(stmt)
     if t is None or t.status != "open":
         return
@@ -145,7 +163,10 @@ async def ask_relay(s: AsyncSession, emp: Employee) -> None:
         s,
         emp,
         OutMessage(
-            text=render("{Опиши|Опишите}, пожалуйста, вопрос или проблему одним сообщением — я передам коллегам из HR.", emp),
+            text=render(
+                "{Опиши|Опишите}, пожалуйста, вопрос или проблему одним сообщением — я передам коллегам из HR.",
+                emp,
+            ),
             buttons=[[Button("Отмена", payload="a:cancel")]],
         ),
     )
@@ -168,7 +189,10 @@ async def hr_reply(s: AsyncSession, t: Ticket, text: str, author: str = "HR") ->
     await channels.send(
         s,
         emp,
-        OutMessage(text=f"💬 {author}:\n{text}", buttons=[[Button("↩️ Вернуться к Корсику", payload="a:close_dialog")]]),
+        OutMessage(
+            text=f"💬 {author}:\n{text}",
+            buttons=[[Button("↩️ Вернуться к Корсику", payload="a:close_dialog")]],
+        ),
         ticket_id=t.id,
         author="hr",
     )
@@ -188,6 +212,12 @@ async def close(s: AsyncSession, t: Ticket, notify: bool = True) -> None:
     await s.commit()
     if notify:
         await channels.send(
-            s, emp, OutMessage(text=render("Диалог с HR завершён. Если появятся вопросы — {пиши|пишите}, я на связи! 🐾", emp))
+            s,
+            emp,
+            OutMessage(
+                text=render(
+                    "Диалог с HR завершён. Если появятся вопросы — {пиши|пишите}, я на связи! 🐾", emp
+                )
+            ),
         )
     hub.publish(ADMIN_FEED, {"type": "ticket_closed", "id": t.id})
