@@ -1,15 +1,16 @@
-"""Планировщик проактивных рассылок (CRON по таймлайну). Очередь — таблица jobs в Postgres.
+"""Очередь рассылок в PostgreSQL. Владение задачей удерживается отдельной транзакцией.
 
-Задачи забираются атомарно (UPDATE ... FOR UPDATE SKIP LOCKED), поэтому воркеров можно запускать
-сколько угодно: одна задача не уйдёт дважды. Отдельный брокер (Redis/RabbitMQ) не нужен.
+Бизнес-обработчики могут делать commit, не освобождая блокировку задачи. После аварии
+running без владельца можно подобрать снова. Исходящие отправки пока не атомарны с БД.
 """
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, text
+from sqlalchemy import func, or_, select
 
 from app.config import settings
 from app.db import session
@@ -18,35 +19,62 @@ from app.models import Employee, Job
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
-CLAIM_BATCH = 20
+CANDIDATE_BATCH = 20
 
-CLAIM_SQL = text("""
-    UPDATE jobs SET status = 'running', attempts = attempts + 1
-    WHERE id IN (
-        SELECT id FROM jobs WHERE status = 'pending' AND run_at <= now()
-        ORDER BY run_at LIMIT :n FOR UPDATE SKIP LOCKED
-    )
-    RETURNING id
-""")
+# Отдельные пространства ключей; id=0 зарезервирован для создания следующего дайджеста.
+JOB_LOCK_NAMESPACE = 0x4B4F5253  # KORS
+EMPLOYEE_LOCK_NAMESPACE = JOB_LOCK_NAMESPACE + 1
+_job_slots = asyncio.Semaphore(2)  # каждая задача занимает соединение для блокировки и для бизнес-операций
 
 
 def utcnow() -> datetime:
     return datetime.now(ZoneInfo("UTC"))
 
 
-async def run_job(job_id: int) -> None:
+async def run_job(job_id: int) -> bool:
     from app.bot.updates import _locks
 
-    async with session() as s:
-        job = await s.get(Job, job_id)
-        if job is None:
-            return  # сотрудника удалили вместе с его задачами, пока задача ждала в пачке
-        if job.employee_id:
-            # шаг таймлайна и ответы сотрудника не должны менять его состояние одновременно
-            async with _locks[job.employee_id]:
+    async with _job_slots, session() as guard, guard.begin():
+        if not await guard.scalar(select(func.pg_try_advisory_xact_lock(JOB_LOCK_NAMESPACE, job_id))):
+            return False
+        async with session() as s:
+            job = await s.get(Job, job_id)
+            if job is None:
+                return False
+            if job.employee_id and not await guard.scalar(select(
+                func.pg_try_advisory_xact_lock(EMPLOYEE_LOCK_NAMESPACE, job.employee_id)
+            )):
+                return False
+            # Сначала локальная блокировка диалога: он тоже меняет jobs и может делать commit.
+            async with _locks[job.employee_id] if job.employee_id else nullcontext():
+                job = await s.scalar(select(Job).where(Job.id == job_id).with_for_update()
+                                     .execution_options(populate_existing=True))
+                if job is None or job.status not in ("pending", "running"):
+                    return False
+                if job.status == "pending" and job.run_at > utcnow():
+                    return False
+                if job.employee_id and await s.scalar(select(Job.id).where(
+                    Job.employee_id == job.employee_id,
+                    or_((Job.status == "pending") & (Job.run_at <= func.now()), Job.status == "running"),
+                    or_(Job.run_at < job.run_at, (Job.run_at == job.run_at) & (Job.id < job.id)),
+                ).limit(1)):
+                    return False
+                if job.attempts >= MAX_ATTEMPTS:
+                    await _retry(s, job, "Обработка прервана до завершения последней попытки")
+                    return True
+                job.status, job.attempts = "running", job.attempts + 1
+                await s.commit()
                 await _execute(s, job)
-        else:
-            await _execute(s, job)
+                return True
+
+
+async def _retry(s, job: Job, error: str) -> None:
+    job.error = error[:1000]
+    job.status = "failed" if job.attempts >= MAX_ATTEMPTS else "pending"
+    job.run_at = utcnow() + timedelta(minutes=job.attempts)
+    if job.kind == "digest" and job.status == "failed":
+        await ensure_digest_job(s, after=utcnow())
+    await s.commit()
 
 
 async def _execute(s, job: Job) -> None:
@@ -55,8 +83,8 @@ async def _execute(s, job: Job) -> None:
     from app.bot.scenario import run_step
 
     job_id = job.id
-    emp = await s.get(Employee, job.employee_id) if job.employee_id else None
     try:
+        emp = await s.get(Employee, job.employee_id) if job.employee_id else None
         if job.kind == "step" and emp:
             await run_step(s, emp, job.ref)
         elif job.kind == "reminder" and emp:
@@ -69,29 +97,30 @@ async def _execute(s, job: Job) -> None:
         log.exception("job %s failed", job_id)
         await s.rollback()
         job = await s.get(Job, job_id)
-        job.error = repr(e)[:1000]
-        job.status = "failed" if job.attempts >= MAX_ATTEMPTS else "pending"
-        job.run_at = utcnow() + timedelta(minutes=job.attempts)
-        if job.kind == "digest" and job.status == "failed":
-            await ensure_digest_job(s, after=utcnow())  # иначе дайджесты остановятся до перезапуска процесса
+        if job is not None:
+            await _retry(s, job, repr(e))
+        return
     await s.commit()
 
 
 async def tick() -> int:
     async with session() as s:
-        ids = list(await s.scalars(CLAIM_SQL, {"n": CLAIM_BATCH}))
-        await s.commit()
+        # Выбираем кандидатов, не захватываем пачку: авария не оставит остальные задачи running.
+        ids = list(await s.scalars(select(Job.id).where(or_(
+            (Job.status == "pending") & (Job.run_at <= func.now()), Job.status == "running",
+        )).order_by(Job.run_at, Job.id).limit(CANDIDATE_BATCH)))
+    executed = 0
     for job_id in ids:
         try:
-            await run_job(job_id)
+            executed += await run_job(job_id)
         except Exception:
-            # сбой одной задачи не должен оставить остальные захваченные задачи в running до перезапуска
             log.exception("job %s crashed", job_id)
-    return len(ids)
+    return executed
 
 
 async def ensure_digest_job(s, after: datetime | None = None) -> None:
     """Еженедельный дайджест «Настроения в коллективе новичков» (роль 04 кейса)."""
+    await s.execute(select(func.pg_advisory_xact_lock(JOB_LOCK_NAMESPACE, 0)))
     exists = await s.scalar(select(Job.id).where(Job.kind == "digest", Job.status == "pending"))
     if exists:
         return
@@ -106,13 +135,10 @@ async def ensure_digest_job(s, after: datetime | None = None) -> None:
 
 
 async def loop() -> None:
-    async with session() as s:
-        await ensure_digest_job(s)
-        # задачи, «зависшие» в running после рестарта процесса, возвращаем в очередь
-        await s.execute(text("UPDATE jobs SET status = 'pending' WHERE status = 'running'"))
-        await s.commit()
     while True:
         try:
+            async with session() as s:
+                await ensure_digest_job(s)
             await tick()
         except Exception:
             log.exception("scheduler tick failed")

@@ -71,7 +71,7 @@ class Employee(Base):
 
 
 class Job(Base):
-    """Очередь отложенных действий (шаги таймлайна, напоминания, дайджест). Забирается через SKIP LOCKED."""
+    """Очередь отложенных действий (шаги таймлайна, напоминания, дайджест). Владение задачей защищает блокировка PostgreSQL."""
 
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -79,7 +79,7 @@ class Job(Base):
     kind: Mapped[str] = mapped_column(String(20), default="step")  # step | reminder | digest
     ref: Mapped[str] = mapped_column(String(100))  # id шага / опроса
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | done | cancelled | failed
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | running | done | cancelled | failed
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
