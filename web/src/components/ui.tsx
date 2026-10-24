@@ -111,14 +111,16 @@ export function Stat({
   value,
   hint,
   tone,
+  details,
 }: {
   label: string
   value: ReactNode
   hint?: string
   tone?: 'red' | 'lime'
+  details?: string // как посчитан показатель — подсказка при наведении
 }) {
   return (
-    <div className="rounded-2xl border border-ink/[0.07] bg-white p-4">
+    <div className="rounded-2xl border border-ink/[0.07] bg-white p-4" title={details}>
       <div className="text-[13px] text-ink/55">{label}</div>
       <div
         className={clsx(

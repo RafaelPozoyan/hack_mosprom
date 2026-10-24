@@ -76,7 +76,24 @@ export type Ticket = {
   employee: string
   site: string
   created_at: string
+  response?: TicketResponse
   messages?: ChatMessage[]
+}
+
+/** Срок первого ответа HR: ответственный рекрутер, срок в рабочих часах площадки и напоминания. */
+export type TicketResponse = {
+  recruiter: string | null
+  due_at: string
+  first_reply_at: string | null
+  overdue: boolean
+  reminded_at: string | null
+  reminder_delivered: boolean | null
+}
+
+export type ResponseTime = {
+  rules: { hours: number; urgent_hours: number }
+  first_reply: { median_min: number | null; tickets: number; days: number }
+  overdue: (Ticket & { response: TicketResponse })[]
 }
 
 export type Meta = {

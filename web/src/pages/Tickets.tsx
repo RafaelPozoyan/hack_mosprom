@@ -4,6 +4,7 @@ import { CheckCircle2, Inbox, Sparkles } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { api, fmtDateTime, type Ticket } from '../api'
+import { ResponseLine } from '../components/ResponseTime'
 import { Avatar, Badge, Btn, Card, Empty, TICKET_KIND, inputCls, siteName, timeAgo } from '../components/ui'
 
 export default function Tickets() {
@@ -69,6 +70,7 @@ export default function Tickets() {
                     </div>
                     <div className="mt-0.5 flex items-center gap-1.5">
                       <Badge tone={TICKET_KIND[t.kind]?.tone}>{TICKET_KIND[t.kind]?.label}</Badge>
+                      {t.response?.overdue && <Badge tone="red">просрочено</Badge>}
                       <span className="truncate text-xs text-ink/55">{t.subject}</span>
                     </div>
                   </div>
@@ -128,6 +130,7 @@ function TicketView({ id }: { id: number }) {
         )
       }
     >
+      <ResponseLine t={t} />
       <div className="mb-4 rounded-2xl bg-lime/15 p-4 text-sm">
         <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-ink/60">
           <Sparkles size={14} /> Суть обращения — подготовил Корсик
