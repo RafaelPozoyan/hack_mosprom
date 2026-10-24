@@ -41,7 +41,7 @@ function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, t
           {m.text && <RichText text={m.text} />}
           {p.file && (
             <a href={`/media/${p.file}`} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-2 rounded-xl bg-ink/5 px-2.5 py-2 text-xs font-medium">
-              <FileText size={16} /> {p.file}
+              <FileText size={16} /> Открыть вложение
             </a>
           )}
           {p.sources && p.sources.length > 0 && (

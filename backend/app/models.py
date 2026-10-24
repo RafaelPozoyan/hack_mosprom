@@ -87,6 +87,15 @@ class Job(Base):
     __table_args__ = (Index("ix_jobs_due", "status", "run_at"),)
 
 
+class StepAttachment(Base):
+    """Файл ручного запуска сохраняется до исполнения и доступен при повторе задачи."""
+
+    __tablename__ = "step_attachments"
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    file: Mapped[str] = mapped_column(String(100))
+    name: Mapped[str] = mapped_column(Text)
+
+
 class Message(Base):
     __tablename__ = "messages"
     id: Mapped[int] = mapped_column(primary_key=True)

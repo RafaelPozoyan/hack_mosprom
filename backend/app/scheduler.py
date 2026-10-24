@@ -6,7 +6,7 @@ running без владельца можно подобрать снова. Ис
 
 import asyncio
 import logging
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -14,7 +14,7 @@ from sqlalchemy import func, or_, select
 
 from app.config import settings
 from app.db import session
-from app.models import Employee, Job
+from app.models import Employee, Job, StepAttachment
 
 log = logging.getLogger(__name__)
 
@@ -31,9 +31,20 @@ def utcnow() -> datetime:
     return datetime.now(ZoneInfo("UTC"))
 
 
-async def run_job(job_id: int) -> bool:
+@asynccontextmanager
+async def employee_owner(guard, employee_id: int | None):
     from app.bot.updates import _locks
 
+    if employee_id and not await guard.scalar(select(
+        func.pg_try_advisory_xact_lock(EMPLOYEE_LOCK_NAMESPACE, employee_id)
+    )):
+        yield False
+        return
+    async with _locks[employee_id] if employee_id else nullcontext():
+        yield True
+
+
+async def run_job(job_id: int) -> bool:
     async with _job_slots, session() as guard, guard.begin():
         if not await guard.scalar(select(func.pg_try_advisory_xact_lock(JOB_LOCK_NAMESPACE, job_id))):
             return False
@@ -41,12 +52,10 @@ async def run_job(job_id: int) -> bool:
             job = await s.get(Job, job_id)
             if job is None:
                 return False
-            if job.employee_id and not await guard.scalar(select(
-                func.pg_try_advisory_xact_lock(EMPLOYEE_LOCK_NAMESPACE, job.employee_id)
-            )):
-                return False
-            # Сначала локальная блокировка диалога: он тоже меняет jobs и может делать commit.
-            async with _locks[job.employee_id] if job.employee_id else nullcontext():
+            # Блокировка отдельной транзакции остаётся у владельца при commit обработчика.
+            async with employee_owner(guard, job.employee_id) as owned:
+                if not owned:
+                    return False
                 job = await s.scalar(select(Job).where(Job.id == job_id).with_for_update()
                                      .execution_options(populate_existing=True))
                 if job is None or job.status not in ("pending", "running"):
@@ -78,15 +87,20 @@ async def _retry(s, job: Job, error: str) -> None:
 
 
 async def _execute(s, job: Job) -> None:
+    from app import channels
     from app.analytics import digest
     from app.bot import escalation, surveys
     from app.bot.scenario import run_step
+    from app.channels import OutMessage
 
     job_id = job.id
     try:
         emp = await s.get(Employee, job.employee_id) if job.employee_id else None
         if job.kind == "step" and emp:
             await run_step(s, emp, job.ref)
+            attachment = await s.get(StepAttachment, job.id)
+            if attachment:
+                await channels.send(s, emp, OutMessage(text="📎 " + attachment.name, file=attachment.file), step_id=job.ref)
         elif job.kind == "reminder" and emp:
             await surveys.remind(s, emp, job.ref)
         elif job.kind == "handoff":
