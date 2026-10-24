@@ -14,6 +14,7 @@ import {
 } from '../api'
 import ChatPhone from '../components/ChatPhone'
 import SupportNote from '../components/SupportNote'
+import TeamPicker from '../components/TeamPicker'
 import {
   Avatar,
   Badge,
@@ -67,8 +68,7 @@ export default function EmployeeCard() {
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {e.address_form && <Badge>общается на «{e.address_form === 'vy' ? 'вы' : 'ты'}»</Badge>}
                 {e.in_dialog_with_hr && <Badge tone="blue">сейчас в диалоге с HR</Badge>}
-                {e.manager && <Badge>руководитель: {e.manager}</Badge>}
-                {e.recruiter && <Badge>рекрутер: {e.recruiter}</Badge>}
+                <TeamPicker e={e} onDone={refresh} />
               </div>
             </div>
             <Btn variant="ghost" onClick={() => setInvite(true)}>
