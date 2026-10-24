@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.dialects.postgresql import insert
 
 from app import scheduler
-from app.api import admin, demo
+from app.api import admin, demo, hr_import
 from app.bot import inbox
 from app.bot.scenario import scenario
 from app.bot.updates import poll_loop
@@ -87,6 +87,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 app.include_router(admin.router)
 app.include_router(admin.manager_router)
 app.include_router(demo.router)
+app.include_router(hr_import.hr_router)
 app.mount("/media", StaticFiles(directory=settings().media_dir), name="media")
 
 

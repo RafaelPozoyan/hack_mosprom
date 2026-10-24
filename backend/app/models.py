@@ -68,10 +68,14 @@ class Employee(Base):
     state: Mapped[dict] = mapped_column(JSONB, default=dict)  # текущий опрос/ожидание ввода
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # табельный номер из кадровой системы — ключ загрузки из файла и API; у добавленных вручную пусто
+    personnel_number: Mapped[str | None] = mapped_column(String(50))
 
     site: Mapped[Site] = relationship(lazy="joined")
     manager: Mapped[Staff | None] = relationship(foreign_keys=[manager_id], lazy="joined")
     recruiter: Mapped[Staff | None] = relationship(foreign_keys=[recruiter_id], lazy="joined")
+
+    __table_args__ = (Index("ix_employees_personnel_number", "personnel_number", unique=True),)
 
 
 class Job(Base):

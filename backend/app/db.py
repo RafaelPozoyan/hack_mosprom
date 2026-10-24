@@ -32,3 +32,12 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # create_all не добавляет колонки в существующие таблицы, а миграций в проекте нет
+        await conn.execute(
+            text("ALTER TABLE employees ADD COLUMN IF NOT EXISTS personnel_number VARCHAR(50)")
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_employees_personnel_number ON employees (personnel_number)"
+            )
+        )
