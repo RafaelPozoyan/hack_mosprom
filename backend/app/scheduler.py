@@ -98,9 +98,12 @@ async def ensure_digest_job(s, after: datetime | None = None) -> None:
     cfg = settings()
     tz = ZoneInfo(cfg.default_tz)
     now = (after or utcnow()).astimezone(tz)
-    days = (cfg.digest_weekday - now.weekday()) % 7 or 7
+    days = (cfg.digest_weekday - now.weekday()) % 7
     hh, mm = map(int, cfg.digest_time.split(":"))
     run_at = datetime.combine(now.date() + timedelta(days=days), time(hh, mm), tzinfo=tz)
+    # Выбираем строго следующее время: наступивший выпуск не создаём повторно.
+    if run_at <= now:
+        run_at += timedelta(days=7)
     s.add(Job(kind="digest", ref="weekly", run_at=run_at))
     await s.commit()
 
