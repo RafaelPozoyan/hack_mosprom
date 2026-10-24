@@ -4,12 +4,13 @@ import asyncio
 import logging
 from collections import defaultdict
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.channels.base import Button, InEvent, OutMessage
 from app.channels.max import max_client
 from app.config import settings
-from app.models import Employee, Message, Staff
+from app.models import Employee, MaxDelivery, Message, Staff
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ async def send(
     ticket_id: int | None = None,
     author: str = "bot",
 ) -> Message:
+    recipient = emp.max_user_id if emp.channel == "max" else None
+    if recipient:
+        # ID журнала следуют порядку commit даже при двух отправителях в один чат.
+        await s.execute(
+            select(func.pg_advisory_xact_lock(func.hashtextextended(f"outbox:user:{recipient}", 0)))
+        )
     m = Message(
         employee_id=emp.id,
         direction="out",
@@ -79,9 +86,8 @@ async def send(
     )
     s.add(m)
     await s.flush()
-    client = max_client()
-    if emp.channel == "max" and emp.max_user_id and client:
-        m.max_mid = await client.send(msg, user_id=emp.max_user_id)
+    if recipient:
+        s.add(MaxDelivery(message_id=m.id, user_id=recipient))
     await s.commit()
     hub.publish(emp.id, {"type": "message", "message": message_view(m)})
     return m
@@ -89,11 +95,18 @@ async def send(
 
 async def edit(s: AsyncSession, emp: Employee, m: Message, msg: OutMessage) -> None:
     """Обновляет уже отправленное сообщение (например, отметки в опросе с несколькими ответами)."""
+    # Этот же замок удерживает доставщик: правка не потеряется при подтверждении отправки.
+    m = await s.scalar(
+        select(Message).where(Message.id == m.id).with_for_update().execution_options(populate_existing=True)
+    )
     m.text = msg.text
     m.payload = msg.to_payload()
-    client = max_client()
-    if emp.channel == "max" and m.max_mid and client:
-        await client.edit(m.max_mid, msg)
+    delivery = await s.get(MaxDelivery, m.id)
+    if delivery:
+        delivery.status, delivery.attempts, delivery.error = "pending", 0, None
+        delivery.available_at = func.now()
+    elif emp.channel == "max" and emp.max_user_id and m.max_mid:
+        s.add(MaxDelivery(message_id=m.id, user_id=emp.max_user_id))
     await s.commit()
     hub.publish(emp.id, {"type": "edit", "message": message_view(m)})
 

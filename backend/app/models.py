@@ -117,6 +117,20 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MaxDelivery(Base):
+    """Доставка записи журнала сотруднику; правка использует сохранённый Message.max_mid."""
+
+    __tablename__ = "max_deliveries"
+    message_id: Mapped[int] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | running | done | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    error: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_max_delivery_user_order", "user_id", "message_id", "status"),)
+
+
 class SurveyAnswer(Base):
     __tablename__ = "survey_answers"
     id: Mapped[int] = mapped_column(primary_key=True)
