@@ -97,7 +97,7 @@ async def _retry(s, job: Job, error: str) -> None:
 async def _execute(s, job: Job) -> None:
     from app import channels
     from app.analytics import digest
-    from app.bot import backlog, escalation, followup, surveys
+    from app.bot import backlog, escalation, followup, response_time, surveys
     from app.bot.progress import StepBlocked, StepNotStarted
     from app.bot.scenario import run_step
     from app.channels import OutMessage
@@ -120,6 +120,8 @@ async def _execute(s, job: Job) -> None:
             await followup.escalate(s, emp, job.ref)
         elif job.kind == "handoff":
             await escalation.finalize(s, int(job.ref))
+        elif job.kind == response_time.KIND:
+            await response_time.check(s, int(job.ref))
         elif job.kind == "digest":
             await digest.run(s)
             await ensure_digest_job(s, after=utcnow())

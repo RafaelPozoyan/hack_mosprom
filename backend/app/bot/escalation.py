@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels, llm
+from app.bot import response_time
 from app.bot.scenario import render
 from app.channels import ADMIN_FEED, Button, OutMessage, hub
 from app.db import after_commit
@@ -71,7 +72,7 @@ async def _handoff(s: AsyncSession, emp: Employee, subject: str) -> Handoff:
 async def queue_ticket(
     s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium"
 ) -> Ticket:
-    """Добавить обращение и подготовку карточки в транзакцию вызывающего обработчика."""
+    """Добавить обращение, подготовку карточки и срок первого ответа в транзакцию вызывающего обработчика."""
     t = Ticket(
         employee_id=emp.id,
         kind=kind,
@@ -83,6 +84,7 @@ async def queue_ticket(
     await s.flush()
     # Без employee_id: подготовка резюме не должна удерживать блокировку диалога новичка.
     s.add(Job(kind="handoff", ref=str(t.id), run_at=datetime.now(ZoneInfo("UTC"))))
+    response_time.track(s, t, emp)
     return t
 
 

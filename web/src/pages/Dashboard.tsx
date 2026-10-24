@@ -3,6 +3,7 @@ import { ArrowRight, BookPlus, CheckCircle2 } from 'lucide-react'
 import { Link } from 'react-router'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, fmtDate, type Dashboard as D } from '../api'
+import { FirstReplyStat, OverdueTickets } from '../components/ResponseTime'
 import SupportToday from '../components/SupportToday'
 import { Avatar, Badge, Card, Empty, Stat, TICKET_KIND, plural, timeAgo } from '../components/ui'
 
@@ -34,6 +35,8 @@ export default function Dashboard() {
         <h1 className="text-2xl font-semibold tracking-tight">{greeting()}!</h1>
         <p className="mt-1 text-sm text-ink/50 first-letter:uppercase">{today}</p>
       </div>
+
+      <OverdueTickets />
 
       <Card
         title="Требует внимания"
@@ -74,7 +77,7 @@ export default function Dashboard() {
         )}
       </Card>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <Stat label="Новички на адаптации" value={k.newcomers} />
         <Stat
           label="Корсик ответил сам"
@@ -93,6 +96,7 @@ export default function Dashboard() {
           hint={k.red_flags ? 'нужна реакция сегодня' : 'нет'}
           tone={k.red_flags ? 'red' : undefined}
         />
+        <FirstReplyStat />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
