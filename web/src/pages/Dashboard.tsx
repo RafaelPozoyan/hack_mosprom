@@ -24,7 +24,7 @@ const WEEKDAY = [
   'в субботу',
 ]
 
-const pct = (v: number | null) => (v === null ? '—' : `${v}%`)
+const muted = (text: string) => <span className="text-lg font-medium text-ink/40">{text}</span>
 
 function greeting() {
   const h = Number(new Date().toLocaleString('ru-RU', { hour: 'numeric', timeZone: 'Europe/Moscow' }))
@@ -106,6 +106,9 @@ export default function Dashboard() {
   })
   if (!data) return null
   const k = data.kpi
+  // Доля в API округлена до процента; при числе вопросов меньше 100 число ответов восстанавливается из неё точно.
+  const answered = k.ai_resolved_pct != null ? Math.round((k.ai_resolved_pct * k.questions) / 100) : 0
+  const missed = k.questions - answered
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -113,24 +116,30 @@ export default function Dashboard() {
 
       <WaitingTickets />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat label="Новички на адаптации" value={k.newcomers} />
         <Stat
           label="Корсик ответил сам"
-          value={pct(k.ai_resolved_pct)}
+          value={
+            !k.questions
+              ? muted('вопросов пока не было')
+              : k.questions < 100
+                ? `${answered} из ${k.questions}`
+                : `${k.ai_resolved_pct}%`
+          }
           hint={
-            k.questions
-              ? `из ${k.questions} ${plural(k.questions, 'вопроса', 'вопросов', 'вопросов')} за 30 дней`
-              : 'вопросов пока не было'
+            !k.questions
+              ? undefined
+              : k.questions < 100
+                ? `${missed ? `на ${missed} не нашёл ответа · ` : ''}за 30 дней`
+                : `из ${k.questions} ${plural(k.questions, 'вопроса', 'вопросов', 'вопросов')} за 30 дней`
           }
           tone="lime"
         />
-        <Stat label="Ответы были полезны" value={pct(k.helpful_pct)} hint="по оценкам новичков" />
         <Stat
-          label="Срочных сигналов"
-          value={k.red_flags}
-          hint={k.red_flags ? 'нужна реакция сегодня' : 'нет'}
-          tone={k.red_flags ? 'red' : undefined}
+          label="Ответы были полезны"
+          value={k.helpful_pct == null ? muted('оценок пока нет') : `${k.helpful_pct}%`}
+          hint={k.helpful_pct == null ? undefined : 'по оценкам новичков'}
         />
         <FirstReplyStat />
       </div>

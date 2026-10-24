@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { AlarmClock, ArrowRight, BellRing, CheckCircle2, ChevronDown } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { ApiError, api, fmtDate, fmtDateTime, fmtTime, type ResponseTime, type Ticket } from '../api'
 import { Avatar, Btn, Card, Empty, Stat, plural, timeAgo } from './ui'
@@ -51,17 +52,18 @@ const until = (iso: string) =>
 export function FirstReplyStat() {
   const { data, isError } = useResponseTime()
   const f = data?.first_reply
-  let hint = ''
-  if (isError) hint = 'не удалось загрузить'
-  else if (f) hint = f.tickets ? 'обычно, в рабочие часы' : 'ответов пока не было'
+  let value: ReactNode = ''
+  if (isError) value = <span className="text-lg font-medium text-ink/40">не удалось загрузить</span>
+  else if (f?.median_min != null) value = f.median_min < 1 ? 'меньше минуты' : duration(f.median_min, true)
+  else if (f) value = <span className="text-lg font-medium text-ink/40">ответов пока не было</span>
   const details = f?.tickets
-    ? `Медиана: половина первых ответов HR — быстрее. ${f.tickets} ${plural(f.tickets, 'обращение', 'обращения', 'обращений')} за ${f.days} дней; ночь, выходные и праздники не считаются.`
+    ? `Половина первых ответов HR приходит быстрее. Посчитано по ${f.tickets} ${plural(f.tickets, 'обращению', 'обращениям', 'обращениям')} за ${f.days} дней; ночь, выходные и праздники не считаются.`
     : undefined
   return (
     <Stat
-      label="Первый ответ HR"
-      value={f?.median_min != null ? duration(f.median_min, true) : '—'}
-      hint={hint}
+      label="Как быстро отвечает HR"
+      value={value}
+      hint={f?.tickets ? 'обычно; ночь и выходные не в счёт' : undefined}
       details={details}
     />
   )
