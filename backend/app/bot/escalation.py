@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import channels, llm
 from app.bot.scenario import render
 from app.channels import ADMIN_FEED, Button, OutMessage, hub
+from app.db import after_commit
 from app.models import Employee, Job, Message, Ticket
 
 log = logging.getLogger(__name__)
@@ -90,7 +91,9 @@ async def create_ticket(
 ) -> Ticket:
     t = await queue_ticket(s, emp, kind, subject, severity)
     await s.commit()
-    hub.publish(ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name})
+    after_commit(
+        s, hub.publish, ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name}
+    )
     return t
 
 
@@ -127,7 +130,7 @@ async def finalize(s: AsyncSession, ticket_id: int) -> None:
         if t is not None and t.status == "open":
             await channels.notify_staff(emp.recruiter, OutMessage(text=text), raise_errors=True)
         await s.commit()
-    hub.publish(ADMIN_FEED, {"type": "ticket_updated", "id": ticket_id})
+    after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_updated", "id": ticket_id})
 
 
 async def open_dialog(s: AsyncSession, emp: Employee, subject: str, kind: str = "problem") -> Ticket:
@@ -179,7 +182,7 @@ async def forward_from_employee(s: AsyncSession, emp: Employee, text: str) -> No
         await s.commit()
         return
     await channels.post_hr_chat(OutMessage(text=f"✉️ #{t.id} · {emp.full_name}:\n{text}"))
-    hub.publish(ADMIN_FEED, {"type": "ticket_message", "id": t.id})
+    after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_message", "id": t.id})
 
 
 async def hr_reply(s: AsyncSession, t: Ticket, text: str, author: str = "HR") -> None:
@@ -220,4 +223,4 @@ async def close(s: AsyncSession, t: Ticket, notify: bool = True) -> None:
                 )
             ),
         )
-    hub.publish(ADMIN_FEED, {"type": "ticket_closed", "id": t.id})
+    after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_closed", "id": t.id})

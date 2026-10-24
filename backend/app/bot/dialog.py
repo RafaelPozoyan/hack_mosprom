@@ -22,6 +22,7 @@ from app.bot.scenario import (
     step,
 )
 from app.channels import Button, InEvent, OutMessage
+from app.db import after_commit
 from app.models import Employee, Job, Message, Question, SurveyAnswer, Ticket
 from app.rag.answer import answer as rag_answer
 
@@ -174,7 +175,7 @@ async def answer_question(s: AsyncSession, emp: Employee, text: str, log_questio
             ),
         )
     if log_question:
-        analyze_later(emp.id, text, "chat", question_id=q.id)
+        after_commit(s, analyze_later, emp.id, text, "chat", question_id=q.id)
 
 
 async def command(s: AsyncSession, emp: Employee, cmd: str) -> None:

@@ -17,6 +17,7 @@ from app.db import get_session
 
 class FakeSession:
     def __init__(self, ticket):
+        self.info = {}
         self.ticket = ticket
         self.commits = 0
 

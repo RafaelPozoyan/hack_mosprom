@@ -4,8 +4,11 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
+from contextlib import AsyncExitStack, nullcontext
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
 from app.bot import dialog, escalation
@@ -20,6 +23,21 @@ log = logging.getLogger(__name__)
 # События одного сотрудника обрабатываются последовательно (двойной клик, быстрые сообщения)
 _locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 
+
+@dataclass
+class EventContext:
+    """Общая сессия и блокировки живут до фиксации входящего события."""
+
+    session: AsyncSession
+    locks: AsyncExitStack
+    employees: set[int] = field(default_factory=set)
+
+    async def lock_employee(self, employee_id: int) -> None:
+        if employee_id not in self.employees:
+            await self.locks.enter_async_context(_locks[employee_id])
+            self.employees.add(employee_id)
+
+
 UNKNOWN_USER = (
     "Привет! Я Корсик 🐾 — ИИ-гид по адаптации новых сотрудников Группы ПОЛИПЛАСТИК.\n"
     "Чтобы начать, откройте меня по QR-коду или ссылке из приглашения рекрутера."
@@ -31,8 +49,15 @@ CODE_TAKEN = (
 TICKET_REF = re.compile(r"#(\d+)")
 
 
-async def handle_employee_event(employee_id: int, ev: InEvent, *, raise_errors: bool = False) -> None:
-    async with _locks[employee_id], session() as s:
+async def handle_employee_event(
+    employee_id: int, ev: InEvent, *, raise_errors: bool = False, context: EventContext | None = None
+) -> None:
+    if context:
+        await context.lock_employee(employee_id)
+    async with (
+        nullcontext() if context else _locks[employee_id],
+        nullcontext(context.session) if context else session() as s,
+    ):
         emp = await s.get(Employee, employee_id)
         if emp is None:
             return
@@ -54,19 +79,23 @@ def _button_text(message: dict, payload: str) -> str:
     return ""
 
 
-async def process_max_update(upd: dict, *, raise_errors: bool = False) -> None:
+async def process_max_update(
+    upd: dict, *, raise_errors: bool = False, context: EventContext | None = None
+) -> None:
     client = max_client()
     kind = upd.get("update_type")
     try:
         if kind == "bot_started":
-            await _on_started(upd["user"], upd.get("payload") or "", raise_errors=raise_errors)
+            await _on_started(
+                upd["user"], upd.get("payload") or "", raise_errors=raise_errors, context=context
+            )
         elif kind == "message_callback":
             cb = upd["callback"]
             try:  # снимает «часики» с кнопки; ошибка здесь не должна мешать обработке нажатия
                 await client.answer_callback(cb["callback_id"])
             except Exception:
                 log.warning("answer_callback failed", exc_info=True)
-            emp_id = await _employee_by_user(cb["user"]["user_id"])
+            emp_id = await _employee_by_user(cb["user"]["user_id"], context=context)
             if emp_id:
                 msg = upd.get("message") or {}
                 await handle_employee_event(
@@ -79,18 +108,21 @@ async def process_max_update(upd: dict, *, raise_errors: bool = False) -> None:
                         message_mid=(msg.get("body") or {}).get("mid"),
                     ),
                     raise_errors=raise_errors,
+                    context=context,
                 )
         elif kind == "message_created":
             msg = upd["message"]
             recipient = msg.get("recipient") or {}
             text = ((msg.get("body") or {}).get("text") or "").strip()
             if settings().max_hr_chat_id and recipient.get("chat_id") == settings().max_hr_chat_id:
-                await _on_hr_chat(msg, text)
+                await _on_hr_chat(msg, text, context=context)
                 return
             user_id = (msg.get("sender") or {}).get("user_id")
-            emp_id = await _employee_by_user(user_id)
+            emp_id = await _employee_by_user(user_id, context=context)
             if emp_id:
-                await handle_employee_event(emp_id, InEvent("text", text=text), raise_errors=raise_errors)
+                await handle_employee_event(
+                    emp_id, InEvent("text", text=text), raise_errors=raise_errors, context=context
+                )
             elif user_id:
                 await client.send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
     except Exception:
@@ -99,16 +131,18 @@ async def process_max_update(upd: dict, *, raise_errors: bool = False) -> None:
             raise
 
 
-async def _employee_by_user(user_id: int | None) -> int | None:
+async def _employee_by_user(user_id: int | None, *, context: EventContext | None = None) -> int | None:
     if not user_id:
         return None
-    async with session() as s:
+    async with nullcontext(context.session) if context else session() as s:
         return await s.scalar(select(Employee.id).where(Employee.max_user_id == user_id))
 
 
-async def _on_started(user: dict, payload: str, *, raise_errors: bool = False) -> None:
+async def _on_started(
+    user: dict, payload: str, *, raise_errors: bool = False, context: EventContext | None = None
+) -> None:
     user_id = user["user_id"]
-    async with session() as s:
+    async with nullcontext(context.session) if context else session() as s:
         if payload.startswith("staff_"):
             staff = await s.scalar(select(Staff).where(Staff.invite_code == payload[6:]))
             if staff and staff.max_user_id not in (None, user_id):
@@ -126,6 +160,9 @@ async def _on_started(user: dict, payload: str, *, raise_errors: bool = False) -
                 )
                 return
         emp = await s.scalar(select(Employee).where(Employee.invite_code == payload)) if payload else None
+        if emp and context:
+            await context.lock_employee(emp.id)
+            emp = await s.get(Employee, emp.id, populate_existing=True)
         # код из QR привязывается к одному аккаунту: чужой скан (QR на экране демо) не уводит путь новичка
         # на другой телефон, а один аккаунт не становится двумя сотрудниками
         other = emp and await s.scalar(
@@ -141,18 +178,20 @@ async def _on_started(user: dict, payload: str, *, raise_errors: bool = False) -
         else:
             emp_id = await s.scalar(select(Employee.id).where(Employee.max_user_id == user_id))
     if emp_id:
-        await handle_employee_event(emp_id, InEvent("start", payload=payload), raise_errors=raise_errors)
+        await handle_employee_event(
+            emp_id, InEvent("start", payload=payload), raise_errors=raise_errors, context=context
+        )
     else:
         await max_client().send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
 
 
-async def _on_hr_chat(msg: dict, text: str) -> None:
+async def _on_hr_chat(msg: dict, text: str, *, context: EventContext | None = None) -> None:
     """Ответ HR реплаем на карточку эскалации или на пересланное уточнение сотрудника → сообщение сотруднику."""
     link = msg.get("link") or {}
     if link.get("type") != "reply" or not text:
         return
     linked, from_bot = link.get("message") or {}, (link.get("sender") or {}).get("is_bot")
-    async with session() as s:
+    async with nullcontext(context.session) if context else session() as s:
         t = await s.scalar(select(Ticket).where(Ticket.hr_chat_mid == linked.get("mid")))
         if not t and from_bot and (m := TICKET_REF.search(linked.get("text") or "")):
             # реплай на уточнение сотрудника («✉️ #12 · …»), а не на карточку: номер обращения есть в тексте
@@ -165,6 +204,10 @@ async def _on_hr_chat(msg: dict, text: str) -> None:
                     )
                 )
             return
+        if context:
+            await context.lock_employee(t.employee_id)
+            await s.refresh(t)
+            await s.refresh(t.employee)
         author = (msg.get("sender") or {}).get("first_name") or (msg.get("sender") or {}).get("name") or "HR"
         if text.lower() in ("/close", "/закрыть"):
             await escalation.close(s, t)
