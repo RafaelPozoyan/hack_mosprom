@@ -9,6 +9,7 @@ dependencies = [
     "holidays>=0.107",
     "httpx>=0.28.1",
     "openai>=3.37.0",
+    "openpyxl>=3.1.5",
     "pgvector>=0.5.1",
     "pydantic-settings>=2.16.1",
     "python-multipart>=0.0.32",
