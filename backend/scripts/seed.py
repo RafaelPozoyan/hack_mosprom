@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text, update
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.bot import dialog, response_time
+from app.bot.backlog import StepSkipped
 from app.bot.scenario import add_months, next_workday, schedule_employee, step, step_run_at
 from app.channels import InEvent
 from app.config import settings
@@ -202,40 +203,49 @@ async def event(emp_id: int, ev: InEvent) -> None:
         await dialog.handle(s, emp, ev)
 
 
+async def free_text(emp_id: int, text: str) -> None:
+    """Свободный ответ в опросе, как у сотрудника: сообщение и подтверждение «Да, это ответ»."""
+    await event(emp_id, InEvent("text", text=text))
+    async with session() as s:
+        emp = await s.get(Employee, emp_id)
+        candidate = (emp.state.get("await") or {}).get("candidate_id")
+    if candidate:
+        await event(emp_id, InEvent("callback", payload=f"a:confirm_comment:{candidate}"))
+
+
 async def answer_survey(emp_id: int, answers: dict) -> None:
     """Отвечает на опрос так, как это сделал бы сотрудник кнопками и текстом."""
     for _ in range(40):
         async with session() as s:
             emp = await s.get(Employee, emp_id)
             st = emp.state.get("survey")
-            aw = (emp.state.get("await") or {}).get("kind")
+            aw = emp.state.get("await") or {}
         if not st:
             return
         from app.bot.surveys import questions
 
         q = questions(emp, st["id"])[st["q"]]
         val = answers.get(q["id"])
-        if aw == "survey_comment":
+        prefix = f"s:{st['id']}:{q['id']}:{st['key']}"  # кнопки опроса несут ключ его текущего запуска
+        if aw.get("kind") == "survey_comment":
             comment = val[1] if isinstance(val, tuple) else None
-            await event(
-                emp_id,
-                InEvent("text", text=comment) if comment else InEvent("callback", payload="a:skip_comment"),
-            )
+            if comment:
+                await free_text(emp_id, comment)
+            else:
+                await event(emp_id, InEvent("callback", payload=f"a:skip_comment:{aw['answer_id']}"))
             continue
         if q["type"] == "text":
-            await event(
-                emp_id,
-                InEvent("text", text=val)
-                if val
-                else InEvent("callback", payload=f"s:{st['id']}:{q['id']}:skip"),
-            )
+            if val:
+                await free_text(emp_id, val)
+            else:
+                await event(emp_id, InEvent("callback", payload=f"{prefix}:skip"))
         elif q["type"] == "multi":
             for opt in val or []:
-                await event(emp_id, InEvent("callback", payload=f"m:{st['id']}:{q['id']}:{opt}"))
-            await event(emp_id, InEvent("callback", payload=f"s:{st['id']}:{q['id']}:done"))
+                await event(emp_id, InEvent("callback", payload=f"m:{st['id']}:{q['id']}:{st['key']}:{opt}"))
+            await event(emp_id, InEvent("callback", payload=f"{prefix}:done"))
         else:
             raw = val[0] if isinstance(val, tuple) else (val or q.get("options", [{}])[0].get("id", "yes"))
-            await event(emp_id, InEvent("callback", payload=f"s:{st['id']}:{q['id']}:{raw}"))
+            await event(emp_id, InEvent("callback", payload=f"{prefix}:{raw}"))
             # если вариант просит комментарий — следующий виток цикла отправит его
 
 
@@ -286,7 +296,9 @@ async def main(dirs: list[Path]) -> None:
                 emp = await s.get(Employee, emp_id)
                 before = await max_ids(s)
                 st = step(kind, emp.site_code) if kind != "chat" else None
-                at = step_run_at(st["at"], emp) if st else None
+                planned = step_run_at(st["at"], emp) if st else None
+                # шаги из будущего по плану (финал у Лебедева) датируем «сейчас», а не завтрашним днём
+                at = min(planned, datetime.now(ZoneInfo("UTC"))) if planned else None
             if kind == "chat":
                 await event(emp_id, InEvent("text", text=payload))
                 await asyncio.sleep(0)
@@ -296,7 +308,13 @@ async def main(dirs: list[Path]) -> None:
                     emp = await s.get(Employee, emp_id)
                     from app.bot.scenario import run_step
 
-                    await run_step(s, emp, kind)
+                    try:
+                        await run_step(s, emp, kind)
+                    except (
+                        StepSkipped
+                    ) as e:  # опоздавший шаг бот пропускает и в жизни — в истории его тоже нет
+                        print(f"  шаг {kind}: {e}")
+                        continue
                 await answer_survey(emp_id, payload)
                 print(f"  шаг {kind}: отвечен")
             # даём фоновому NLP-анализу сообщений завершиться до сдвига дат
@@ -311,6 +329,15 @@ async def main(dirs: list[Path]) -> None:
                     )
             async with session() as s:
                 await backdate(s, before, at)
+    async with session() as s:
+        # История демо-сотрудников растянута на месяцы: старые обращения HR уже разобрал, открытыми остаются свежие
+        await s.execute(
+            text(
+                "UPDATE tickets SET status = 'closed', closed_at = created_at + interval '1 day' "
+                "WHERE status = 'open' AND created_at < now() - interval '7 days'"
+            )
+        )
+        await s.commit()
     print("\nГотово.")
 
 
