@@ -88,6 +88,7 @@ app.include_router(admin.router)
 app.include_router(admin.manager_router)
 app.include_router(demo.router)
 app.include_router(support.router)
+app.include_router(hr_import.router)
 app.include_router(hr_import.hr_router)
 app.mount("/media", StaticFiles(directory=settings().media_dir), name="media")
 

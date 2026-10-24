@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Download, Plus, Search, UserPlus } from 'lucide-react'
+import { Check, Copy, Download, FileSpreadsheet, Plus, Search, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { api, fmtDate, probationDay, withToken, type Employee, type Meta } from '../api'
+import EmployeeImport from '../components/EmployeeImport'
 import {
   Avatar,
   Badge,
@@ -41,6 +42,7 @@ export default function Employees() {
   })
   const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
   const [open, setOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
   const [q, setQ] = useState('')
   const list = emps.filter((e) => `${e.full_name} ${e.position}`.toLowerCase().includes(q.toLowerCase()))
 
@@ -48,9 +50,14 @@ export default function Employees() {
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Сотрудники на адаптации</h1>
-        <Btn onClick={() => setOpen(true)}>
-          <Plus size={16} /> Добавить новичка
-        </Btn>
+        <div className="flex gap-2">
+          <Btn variant="ghost" onClick={() => setImporting(true)}>
+            <FileSpreadsheet size={16} /> Загрузить из Excel
+          </Btn>
+          <Btn onClick={() => setOpen(true)}>
+            <Plus size={16} /> Добавить новичка
+          </Btn>
+        </div>
       </div>
       <Card>
         <div className="relative mb-3 max-w-sm">
@@ -66,7 +73,7 @@ export default function Employees() {
           <Empty icon={<UserPlus className="text-ink/30" />}>
             {emps.length
               ? 'Никого не нашлось'
-              : 'Добавьте первого новичка — Корсик сам проведёт его по пути адаптации'}
+              : 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'}
           </Empty>
         ) : (
           <table className="w-full text-sm">
@@ -116,6 +123,12 @@ export default function Employees() {
           </table>
         )}
       </Card>
+      {importing && (
+        <EmployeeImport
+          onClose={() => setImporting(false)}
+          onDone={() => qc.invalidateQueries({ queryKey: ['employees'] })}
+        />
+      )}
       {meta && (
         <CreateModal
           open={open}
