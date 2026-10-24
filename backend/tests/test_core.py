@@ -382,3 +382,25 @@ def test_manager_never_sees_topics_from_a_record_about_himself():
     # в первой записи соседствуют «недостаток информации» и жалоба на руководителя — запись не показывается целиком
     flags = [["недостаток информации", "конфликт с наставником или руководителем"], ["нет доступов"]]
     assert manager_topics(flags, tx) == ["нет доступов"]
+
+
+@pytest.mark.parametrize(
+    ("value", "words"),
+    [
+        ({"option": "c", "label": "Пока ничего не понял"}, "Пока ничего не понял"),
+        ({"options": ["a", "b"], "labels": ["Коллеги", "Наставник"]}, "Коллеги, Наставник"),
+        ({"score": 3}, "3 из 10"),
+        ({"answer": "no"}, "Нет"),
+    ],
+)
+def test_survey_answer_words(value, words):
+    from app.bot import surveys
+
+    assert surveys.answer_words(value) == words
+
+
+def test_survey_ticket_subject_starts_with_newcomer_words():
+    from app.bot import surveys
+
+    subject = surveys.ticket_subject("1) С каким настроением ты приходишь на работу?", {"label": "Уже устал"})
+    assert subject == "Уже устал — С каким настроением ты приходишь на работу?"

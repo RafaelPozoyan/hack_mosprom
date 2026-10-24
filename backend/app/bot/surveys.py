@@ -1,5 +1,6 @@
 """Опросы из ТЗ: выбор, да/нет, шкала 1–10 с комментарием ниже порога, множественный выбор, открытый ответ."""
 
+import re
 from datetime import datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -140,6 +141,25 @@ async def toggle(
         await channels.edit(s, emp, msg, question_message(emp, survey_id, q, st["selected"]))
 
 
+def answer_words(value: dict) -> str:
+    """Ответ новичка словами: подпись варианта, список вариантов или оценка — не служебный словарь."""
+    if value.get("label"):
+        return value["label"]
+    if value.get("labels"):
+        return ", ".join(value["labels"])
+    if value.get("text"):
+        return value["text"]
+    if "score" in value:
+        return f"{value['score']} из 10"
+    return {"yes": "Да", "no": "Нет"}.get(value.get("answer"), "")
+
+
+def ticket_subject(question: str, value: dict) -> str:
+    """Тема обращения из опроса: сначала слова новичка, потом вопрос без номера — HR видит суть в списке."""
+    question = re.sub(r"^\d+\)\s*", "", question)
+    return f"{answer_words(value)} — {question}"
+
+
 async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: str) -> None:
     q = current(emp, survey_id, qid)
     if not q:
@@ -181,7 +201,7 @@ async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: 
     s.add(ans)
     await s.commit()
     if flag and not ask:
-        await react(s, emp, [flag], "medium", f"{render(q['text'], emp)} → {value.get('label') or value}")
+        await react(s, emp, [flag], "medium", ticket_subject(render(q["text"], emp), value))
 
     if ask:
         emp.state = {
