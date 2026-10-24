@@ -98,7 +98,7 @@ async def edit(s: AsyncSession, emp: Employee, m: Message, msg: OutMessage) -> N
     hub.publish(emp.id, {"type": "edit", "message": message_view(m)})
 
 
-async def notify_staff(staff: Staff | None, msg: OutMessage) -> bool:
+async def notify_staff(staff: Staff | None, msg: OutMessage, *, raise_errors: bool = False) -> bool:
     """Личное сообщение руководителю/HR в MAX. Без MAX-аккаунта уведомление видно только в админке."""
     client = max_client()
     if not (staff and staff.max_user_id and client):
@@ -108,10 +108,12 @@ async def notify_staff(staff: Staff | None, msg: OutMessage) -> bool:
         return True
     except Exception:
         log.exception("notify_staff failed")
+        if raise_errors:
+            raise
         return False
 
 
-async def post_hr_chat(msg: OutMessage) -> str | None:
+async def post_hr_chat(msg: OutMessage, *, raise_errors: bool = False) -> str | None:
     """Публикует карточку в групповой чат HR. Ответ HR реплаем на неё уходит сотруднику (см. bot/escalation)."""
     client = max_client()
     chat_id = settings().max_hr_chat_id
@@ -121,6 +123,8 @@ async def post_hr_chat(msg: OutMessage) -> str | None:
         return await client.send(msg, chat_id=chat_id)
     except Exception:
         log.exception("post_hr_chat failed")
+        if raise_errors:
+            raise
         return None
 
 
