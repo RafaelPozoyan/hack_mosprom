@@ -11,11 +11,13 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app import channels
-from app.bot import dialog, inbox, surveys, updates
+from app import channels, scheduler
+from app.api import admin
+from app.bot import dialog, escalation, inbox, surveys, updates
 from app.db import Base
 from app.models import Employee, Job, MaxDelivery, MaxUpdate, Message, Site, Staff, SurveyAnswer, Ticket
 
@@ -61,6 +63,8 @@ async def db(monkeypatch):
         monkeypatch.setattr(inbox, "session", session)
         monkeypatch.setattr(updates, "session", session)
         monkeypatch.setattr(updates, "_locks", defaultdict(asyncio.Lock))
+        monkeypatch.setattr(updates.demo_try, "schedule_after_event", Mock())
+        monkeypatch.setattr(updates.demo_try, "schedule_hint", Mock())
         client = SimpleNamespace(answer_callback=AsyncMock(), send=AsyncMock())
         monkeypatch.setattr(updates, "max_client", lambda: client)
         async with factory() as s:
@@ -82,7 +86,7 @@ async def db(monkeypatch):
                 )
             )
             await s.commit()
-        yield SimpleNamespace(session=factory, client=client)
+        yield SimpleNamespace(session=factory, client=client, schema=schema)
     finally:
         await engine.dispose()
         async with owner.begin() as c:
@@ -371,3 +375,173 @@ async def test_start_waits_before_binding_and_preserves_concurrent_state(db, mon
         if worker and not worker.done():
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+
+
+async def hr_ticket(db, *, active=False):
+    async with db.session() as s:
+        ticket = Ticket(employee_id=1, kind="problem", subject="Нужны доступы", hr_chat_mid="hr-card")
+        s.add(ticket)
+        await s.flush()
+        if active:
+            emp = await s.get(Employee, 1)
+            emp.state = {**emp.state, "ticket_id": ticket.id}
+        await s.commit()
+        return ticket.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["reply", "close"])
+@pytest.mark.parametrize("transport", ["api", "polling"])
+async def test_hr_action_preserves_concurrent_survey_answer(db, monkeypatch, action, transport):
+    ticket_id = await hr_ticket(db, active=action == "close")
+    saved, release, hr_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    process = inbox.process_max_update
+
+    async def pause(*args, **kwargs):
+        await process(*args, **kwargs)
+        saved.set()
+        await release.wait()
+
+    monkeypatch.setattr(inbox, "process_max_update", pause)
+    tasks = []
+    async with db.session() as hr:
+        stale = await hr.get(Ticket, ticket_id)
+        assert stale.employee.state["survey"]["q"] == 0
+
+        @asynccontextmanager
+        async def hr_session():
+            yield hr
+
+        if transport == "polling":
+            monkeypatch.setattr(updates, "session", hr_session)
+
+        async def act():
+            hr_started.set()
+            if transport == "polling":
+                msg = {"link": {"type": "reply", "message": {"mid": "hr-card"}}}
+                await updates._on_hr_chat(msg, "/close" if action == "close" else "Поможем с доступами")
+            elif action == "close":
+                await admin.close_ticket(ticket_id, hr)
+            else:
+                await admin.reply_ticket(ticket_id, admin.ReplyIn(text="Поможем с доступами"), hr)
+
+        try:
+            await inbox.enqueue(callback())
+            worker = asyncio.create_task(inbox.process_one())
+            tasks.append(worker)
+            await asyncio.wait_for(saved.wait(), timeout=5)
+            request = asyncio.create_task(act())
+            tasks.append(request)
+            await asyncio.wait_for(hr_started.wait(), timeout=5)
+            assert not request.done()
+            release.set()
+            await asyncio.wait_for(asyncio.gather(*tasks), timeout=5)
+        finally:
+            release.set()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        assert emp.state["survey"]["q"] == 1
+        assert emp.state.get("ticket_id") == (ticket_id if action == "reply" else None)
+        assert (await s.get(Ticket, ticket_id)).status == ("open" if action == "reply" else "closed")
+        assert await s.scalar(select(func.count()).select_from(SurveyAnswer)) == 1
+        assert await s.scalar(select(func.count()).select_from(MaxDelivery)) == 2
+        assert (await s.scalar(select(MaxUpdate))).status == "done"
+
+
+@pytest.mark.asyncio
+async def test_hr_reply_rereads_ticket_closed_under_scheduler_lock(db, monkeypatch):
+    ticket_id = await hr_ticket(db, active=True)
+    entered = asyncio.Event()
+    read_ticket = admin._ticket
+
+    async def observe_read(s, tid):
+        ticket = await read_ticket(s, tid)
+        entered.set()
+        return ticket
+
+    monkeypatch.setattr(admin, "_ticket", observe_read)
+    request = None
+    async with db.session() as hr:
+        stale = await hr.get(Ticket, ticket_id)
+        assert stale.status == "open"
+        try:
+            async with db.session() as guard, guard.begin(), scheduler.employee_owner(guard, 1) as owned:
+                assert owned
+                request = asyncio.create_task(
+                    admin.reply_ticket(ticket_id, admin.ReplyIn(text="Поздний ответ"), hr)
+                )
+                await asyncio.wait_for(entered.wait(), timeout=5)
+                async with db.session() as closer:
+                    ticket = await closer.get(Ticket, ticket_id)
+                    ticket.employee.state = {
+                        **ticket.employee.state,
+                        "survey": {"id": "day3", "q": 1, "key": "run"},
+                    }
+                    await asyncio.wait_for(escalation.close(closer, ticket, notify=False), timeout=5)
+            with pytest.raises(HTTPException) as error:
+                await asyncio.wait_for(request, timeout=5)
+            assert error.value.status_code == 409
+        finally:
+            if request and not request.done():
+                request.cancel()
+            if request:
+                await asyncio.gather(request, return_exceptions=True)
+    async with db.session() as s:
+        assert await s.scalar(select(func.count()).select_from(MaxDelivery)) == 0
+        assert await s.scalar(select(func.count()).select_from(Message)) == 0
+        assert (await s.get(Employee, 1)).state["survey"]["q"] == 1
+
+
+@pytest.mark.asyncio
+async def test_waiting_hr_releases_connection_for_dialog_owner(db, monkeypatch):
+    ticket_id = await hr_ticket(db)
+    waiting = asyncio.Event()
+
+    class ObservedLock(asyncio.Lock):
+        async def acquire(self):
+            waiting.set()
+            return await super().acquire()
+
+    monkeypatch.setitem(updates._locks, 1, ObservedLock())
+    engine = create_async_engine(
+        os.environ["TEST_DATABASE_URL"],
+        pool_size=1,
+        max_overflow=0,
+        pool_timeout=1,
+        connect_args={"server_settings": {"search_path": db.schema}},
+    )
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    request = None
+    try:
+        async with factory() as owner, factory() as hr:
+            try:
+                async with updates._locks[1]:
+                    waiting.clear()
+                    emp = await owner.get(Employee, 1)
+                    await owner.commit()
+                    request = asyncio.create_task(
+                        admin.reply_ticket(ticket_id, admin.ReplyIn(text="Поможем с доступами"), hr)
+                    )
+                    await asyncio.wait_for(waiting.wait(), timeout=5)
+                    assert not request.done()
+                    # Владелец диалога продолжает работу после промежуточного commit.
+                    await owner.refresh(emp)
+                    emp.state = {**emp.state, "survey": {"id": "day3", "q": 1, "key": "run"}}
+                    await owner.commit()
+                await asyncio.wait_for(request, timeout=5)
+            finally:
+                if request and not request.done():
+                    request.cancel()
+                if request:
+                    await asyncio.gather(request, return_exceptions=True)
+    finally:
+        await engine.dispose()
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        assert emp.state["survey"]["q"] == 1
+        assert emp.state["ticket_id"] == ticket_id
+        assert await s.scalar(select(func.count()).select_from(MaxDelivery)) == 1
