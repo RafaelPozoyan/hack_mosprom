@@ -162,7 +162,10 @@ function Panel({ logout, protectedPanel }: { logout: () => void; protectedPanel:
 
         <main className="min-w-0 flex-1 px-8 py-7">
           <Routes>
-            <Route path="/" element={role === 'manager' ? <Navigate to="/my" /> : <Dashboard />} />
+            <Route
+              path="/"
+              element={role === 'manager' ? <Navigate to="/my" /> : <Dashboard head={role === 'head'} />}
+            />
             <Route path="/employees" element={<Employees />} />
             <Route
               path="/employees/:id"

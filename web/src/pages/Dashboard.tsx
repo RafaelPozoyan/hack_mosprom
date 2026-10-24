@@ -44,8 +44,8 @@ function firstDay(emps: Employee[]) {
   return `${n} ${plural(n, 'новичок выходит', 'новичка выходят', 'новичков выходят')} ${when}`
 }
 
-/** Фраза-итог дня и одно главное действие. */
-function Summary() {
+/** Фраза-итог дня и одно главное действие. HR-руководитель не отвечает на обращения сам: ему — только сроки. */
+function Summary({ head }: { head: boolean }) {
   const navigate = useNavigate()
   const tickets = useOpenTickets().data
   const support = useSupportToday().data
@@ -53,10 +53,11 @@ function Summary() {
     queryKey: ['employees'],
     queryFn: () => api.get<Employee[]>('/api/employees'),
   })
-  const waiting = (tickets && unanswered(tickets)) ?? []
+  const waiting = (head ? tickets?.filter((t) => t.response?.overdue) : tickets && unanswered(tickets)) ?? []
   const n = waiting.length
   const parts = [
-    n > 0 && `${n} ${plural(n, 'обращение ждёт', 'обращения ждут', 'обращений ждут')} ответа`,
+    n > 0 &&
+      `${n} ${plural(n, 'обращение ждёт', 'обращения ждут', 'обращений ждут')} ответа${head ? ' дольше срока' : ''}`,
     support?.length &&
       `${support.length} ${plural(support.length, 'новичку', 'новичкам', 'новичкам')} нужна поддержка`,
     emps && firstDay(emps),
@@ -71,13 +72,15 @@ function Summary() {
   })
 
   let action: { label: string; to: string } | null = null
-  if (n)
-    action = {
-      label: n === 1 ? 'Ответить на обращение' : 'Ответить на обращения',
-      to: `/tickets?id=${firstInLine(waiting)!.id}`,
-    }
-  else if (support?.length)
-    action = { label: 'Открыть карточку новичка', to: `/employees/${support[0].employee_id}` }
+  if (!head) {
+    if (n)
+      action = {
+        label: n === 1 ? 'Ответить на обращение' : 'Ответить на обращения',
+        to: `/tickets?id=${firstInLine(waiting)!.id}`,
+      }
+    else if (support?.length)
+      action = { label: 'Открыть карточку новичка', to: `/employees/${support[0].employee_id}` }
+  }
 
   return (
     <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-4">
@@ -87,7 +90,10 @@ function Summary() {
         <p className="mt-2 text-[17px] text-ink/80">
           {parts.length
             ? parts.join(' · ')
-            : loaded && 'Всё спокойно: новых обращений и тревожных ответов нет'}
+            : loaded &&
+              (head
+                ? 'Всё спокойно: просроченных обращений и тревожных ответов нет'
+                : 'Всё спокойно: новых обращений и тревожных ответов нет')}
         </p>
       </div>
       {action && (
@@ -100,13 +106,14 @@ function Summary() {
 }
 
 /** Вопросы к Корсику за 30 дней: на что он не нашёл ответа (это можно исправить) и о чём спрашивают чаще. */
-function Questions({ d }: { d: D }) {
+function Questions({ d, head }: { d: D; head: boolean }) {
   const gaps = d.knowledge_gaps.slice(0, 5)
   return (
     <Card
       title="Вопросы новичков"
       subtitle="За 30 дней"
       action={
+        !head &&
         gaps.length > 0 && (
           <Link
             to="/kb"
@@ -164,7 +171,7 @@ function Questions({ d }: { d: D }) {
   )
 }
 
-export default function Dashboard() {
+export default function Dashboard({ head = false }: { head?: boolean }) {
   const { data, isError, refetch, isFetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get<D>('/api/dashboard'),
@@ -178,9 +185,9 @@ export default function Dashboard() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
-      <Summary />
+      <Summary head={head} />
 
-      <WaitingTickets />
+      <WaitingTickets head={head} />
 
       {k ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -225,7 +232,7 @@ export default function Dashboard() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <SupportToday />
-        {data && <Questions d={data} />}
+        {data && <Questions d={data} head={head} />}
       </div>
 
       {data && (

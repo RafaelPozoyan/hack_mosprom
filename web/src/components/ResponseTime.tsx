@@ -107,13 +107,14 @@ function byEmployee(tickets: Ticket[]): Person[] {
 /** Обращение, с которого стоит начать: первая строка «Ждут вашего ответа». */
 export const firstInLine = (tickets: Ticket[]): Ticket | undefined => byEmployee(tickets)[0]?.main
 
-/** «Сегодня»: обращения без ответа HR по новичкам. */
-export function WaitingTickets() {
+/** «Сегодня»: обращения без ответа HR по новичкам. HR-руководителю — только те, где срок вышел. */
+export function WaitingTickets({ head = false }: { head?: boolean }) {
   const { data, isError, refetch, isFetching } = useOpenTickets()
   const rules = useResponseTime().data?.rules
+  const title = head ? 'Просрочено' : 'Ждут вашего ответа'
   if (isError && !data) {
     return (
-      <Card title="Ждут вашего ответа">
+      <Card title={title}>
         <Empty>
           Не удалось загрузить обращения. Проверьте соединение.
           <Btn small variant="ghost" onClick={() => refetch()} disabled={isFetching}>
@@ -124,12 +125,16 @@ export function WaitingTickets() {
     )
   }
   if (!data) return null
-  const people = byEmployee(unanswered(data))
+  const people = byEmployee(head ? data.filter((t) => t.response?.overdue) : unanswered(data))
+  if (head && !people.length) return null
   return (
     <Card
-      title="Ждут вашего ответа"
-      subtitle={people.length ? 'Корсик передал вам' : undefined}
+      title={title}
+      subtitle={
+        head ? 'Новички ждут ответа рекрутера дольше срока' : people.length ? 'Корсик передал вам' : undefined
+      }
       action={
+        !head &&
         data.length > 0 && (
           <Link
             to="/tickets"
@@ -148,7 +153,7 @@ export function WaitingTickets() {
       ) : (
         <div className="flex flex-col divide-y divide-ink/[0.06]">
           {people.map((p) => (
-            <PersonRow key={p.id} p={p} />
+            <PersonRow key={p.id} p={p} head={head} />
           ))}
         </div>
       )}
@@ -168,7 +173,7 @@ export function WaitingTickets() {
   )
 }
 
-function PersonRow({ p }: { p: Person }) {
+function PersonRow({ p, head }: { p: Person; head: boolean }) {
   const qc = useQueryClient()
   const t = p.main
   const late = p.overdue ? t.response : undefined
@@ -203,7 +208,7 @@ function PersonRow({ p }: { p: Person }) {
   return (
     <div className="flex items-center gap-4 py-2">
       <Link
-        to={`/tickets?id=${t.id}`}
+        to={head ? `/employees/${p.id}` : `/tickets?id=${t.id}`}
         className="-mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-ink/[0.025]"
       >
         <Avatar name={p.name} size={36} />
