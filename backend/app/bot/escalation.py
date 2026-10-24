@@ -134,6 +134,25 @@ async def finalize(s: AsyncSession, ticket_id: int) -> None:
 
 
 async def open_dialog(s: AsyncSession, emp: Employee, subject: str, kind: str = "problem") -> Ticket:
+    current = await s.get(Ticket, emp.state["ticket_id"]) if emp.state.get("ticket_id") else None
+    if current and current.status == "open":
+        # Повторное нажатие или новый вопрос при открытом диалоге: второе обращение и второе уведомление не нужны
+        emp.state = {k: v for k, v in emp.state.items() if k != "await"}
+        await s.commit()
+        if subject == current.subject:
+            text = "Уже передал — ответ придёт сюда же, в этот чат 🙌"
+        else:
+            await forward_from_employee(s, emp, subject)
+            text = "Добавил это в {твой|ваш} диалог с HR — ответ придёт сюда же, в этот чат 🙌"
+        await channels.send(
+            s,
+            emp,
+            OutMessage(
+                text=render(text, emp), buttons=[[Button("↩️ Вернуться к Корсику", payload="a:close_dialog")]]
+            ),
+            ticket_id=current.id,
+        )
+        return current
     t = await create_ticket(s, emp, kind, subject)
     emp.state = {**{k: v for k, v in emp.state.items() if k != "await"}, "ticket_id": t.id}
     await s.commit()
