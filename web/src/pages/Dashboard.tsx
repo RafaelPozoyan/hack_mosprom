@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, BookPlus } from 'lucide-react'
 import { Link, useNavigate } from 'react-router'
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { api, fmtDate, type Dashboard as D, type Employee } from '../api'
+import { api, type Dashboard as D, type Employee } from '../api'
+import { MoodWeek } from '../components/Mood'
 import {
   FirstReplyStat,
   WaitingTickets,
@@ -147,39 +147,8 @@ export default function Dashboard() {
       <div className="grid gap-6 lg:grid-cols-2">
         <SupportToday />
 
-        <Card title="Настроение новичков" subtitle="Как Корсик оценил свободные ответы — по неделям">
-          {data.sentiment_weekly.length === 0 ? (
-            <Empty>Данных пока нет — они появятся после первых опросов</Empty>
-          ) : (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart
-                data={data.sentiment_weekly.map((w) => ({ ...w, week: `с ${fmtDate(w.week)}` }))}
-                barSize={28}
-              >
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#0b2e3a14" />
-                <XAxis
-                  dataKey="week"
-                  tick={{ fontSize: 12, fill: '#0b2e3a99' }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  allowDecimals={false}
-                  tick={{ fontSize: 12, fill: '#0b2e3a99' }}
-                  axisLine={false}
-                  tickLine={false}
-                  width={24}
-                />
-                <Tooltip
-                  cursor={{ fill: '#0b2e3a08' }}
-                  contentStyle={{ borderRadius: 12, border: '1px solid #0b2e3a1a', fontSize: 13 }}
-                />
-                <Bar dataKey="positive" name="хорошее" stackId="s" fill="#a6ce39" />
-                <Bar dataKey="neutral" name="спокойное" stackId="s" fill="#cbd5e1" />
-                <Bar dataKey="negative" name="тревожное" stackId="s" fill="#f43f5e" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          )}
+        <Card title="Настроение новичков" subtitle="По ответам новичков в опросах и чате">
+          <MoodWeek weeks={data.sentiment_weekly} />
         </Card>
       </div>
 
