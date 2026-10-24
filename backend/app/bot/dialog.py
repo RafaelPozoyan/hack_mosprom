@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
 from app.analytics.sentiment import analyze_later
-from app.bot import escalation, progress, surveys
+from app.bot import escalation, followup, progress, surveys
 from app.bot.scenario import (
     button_rows,
     find_button,
@@ -248,6 +248,8 @@ async def action(s: AsyncSession, emp: Employee, act: str) -> None:
         await surveys.comment(s, emp, None)
     elif name == "resume":
         await surveys.resume(s, emp)
+    elif name == "required":
+        await followup.resume(s, emp, arg)
     elif name == "progress":
         await send_progress(s, emp)
     elif name == "menu":

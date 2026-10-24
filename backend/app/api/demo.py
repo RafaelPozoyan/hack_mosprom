@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin import auth
+from app.bot import followup
 from app.bot.updates import handle_employee_event
 from app.channels import InEvent, hub, message_view
 from app.db import get_session
@@ -67,7 +68,11 @@ async def messages(emp_id: int, s: AsyncSession = Depends(get_session)):
 async def run_next(emp_id: int, s: AsyncSession = Depends(get_session)):
     """Перемотка: выполнить ближайший запланированный шаг таймлайна прямо сейчас."""
     j = await s.scalar(
-        select(Job).where(Job.employee_id == emp_id, Job.status.in_(["pending", "running"]), Job.kind.in_(["step", "reminder"])).order_by(Job.run_at, Job.id).limit(1).with_for_update()
+        select(Job).where(
+            Job.employee_id == emp_id,
+            Job.status.in_(["pending", "running"]),
+            Job.kind.in_(["step", "reminder", *followup.KINDS]),
+        ).order_by(Job.run_at, Job.id).limit(1).with_for_update()
     )
     if not j:
         return {"ok": False, "step": None}

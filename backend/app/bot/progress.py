@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot import backlog
+from app.bot import backlog, followup
 from app.models import Employee, Job
 
 
@@ -73,6 +73,8 @@ async def begin(s: AsyncSession, emp: Employee, st: dict) -> None:
         )
     if st.get("required") and not state.get("required_step"):
         state["required_step"] = {"id": st["id"], "started_at": datetime.now(UTC).isoformat()}
+    if st.get("required") and not state["required_step"].get("key"):
+        state["required_step"] = await followup.schedule(s, emp, state["required_step"])
     if state != emp.state:
         emp.state = state
         await s.commit()
@@ -82,6 +84,17 @@ async def complete(s: AsyncSession, emp: Employee, step_id: str) -> None:
     """Снять ожидание и разбудить отложенные шаги в одной транзакции с сохранением ответа."""
     if required_step(emp) != step_id:
         return
+    waiting = emp.state.get("required_step") or {}
+    await s.execute(
+        update(Job)
+        .where(
+            Job.employee_id == emp.id,
+            Job.kind.in_(followup.KINDS),
+            Job.ref == waiting.get("key"),
+            Job.status.in_(["pending", "running"]),
+        )
+        .values(status="cancelled")
+    )
     emp.state = {key: value for key, value in emp.state.items() if key != "required_step"}
     await s.execute(
         update(Job)
