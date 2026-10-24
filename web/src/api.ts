@@ -12,8 +12,13 @@ export type ChatMessage = {
     button?: boolean
   }
   step_id: string | null
+  /** Плановое время шага от даты выхода — только в демо-чате панели: в MAX подпись не уходит. */
+  plan?: string | null
   created_at: string
 }
+
+/** Что выполнит перемотка в демо-чате: ближайший шаг и когда он по плану. */
+export type UpNext = { title: string; plan: string | null }
 
 export type Employee = {
   id: number
