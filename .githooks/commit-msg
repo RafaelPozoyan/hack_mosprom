@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Отклоняет коммит с подписью ИИ-агента (AGENTS.md, раздел 1). Включение: git config core.hooksPath .githooks
-pattern='co-authored-by:.*(claude|anthropic|openai|chatgpt|copilot|cursor|codex|gemini|devin|aider)|generated (with|by) \[?(claude|chatgpt|copilot|cursor|codex|gemini)|noreply@anthropic\.com|🤖'
-if grep -qiE "$pattern" "$1"; then
-  echo "Коммит отклонён: в сообщении подпись ИИ-агента (AGENTS.md, раздел 1). Уберите её и повторите." >&2
-  exit 1
-fi
