@@ -30,6 +30,8 @@ import {
   type AnalysisItem,
   type Employee,
   type EmployeeCardData,
+  type Meta,
+  type Notification,
   type SupportReason,
   type Ticket,
   type TimelineStep,
@@ -769,27 +771,55 @@ function Signals({ data, items, calm }: { data: EmployeeCardData; items: Concern
           </details>
         )}
       </Card>
-      <Card title="Кого Корсик уведомил">
-        {data.notifications.length === 0 ? (
-          <Empty>Уведомлений не было</Empty>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {data.notifications.map((n, i) => (
-              <div key={i} className="flex gap-3 rounded-xl bg-sky-50/60 p-3 text-sm">
-                <BellRing size={16} className="mt-0.5 shrink-0 text-sky-700" />
-                <div className="min-w-0 flex-1">
-                  <div className="mb-0.5 text-xs text-ink/50">
-                    {n.to === 'manager' ? 'Руководителю' : 'Рекрутеру'} · {timeAgo(n.at)} ·{' '}
-                    {n.delivered ? 'в MAX' : 'в панели'}
-                  </div>
-                  <div className="whitespace-pre-wrap text-ink/80">{n.text}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+      <Notifications data={data} />
     </div>
+  )
+}
+
+/** Одно и то же уведомление тому же человеку показываем один раз — самое свежее (сервер отдаёт свежие первыми). */
+const unique = (list: Notification[]) =>
+  list.filter((n, i) => list.findIndex((m) => m.to === n.to && m.text === n.text) === i)
+
+/** Почему уведомление не дошло в MAX. Сервер помнит только «дошло или нет» (channels.notify_staff): не дойти
+ *  могло, если Корсик не подключён к MAX, адресат не назначен или не подключил MAX, либо MAX не принял сообщение.
+ *  Причину видно по нынешнему состоянию команды; если сейчас всё подключено — причину не называем. */
+function delivery(n: Notification, e: Employee, meta: Meta | undefined) {
+  if (n.delivered) return 'доставлено в MAX'
+  const who = n.to === 'manager' ? 'руководитель' : 'рекрутер'
+  const id = n.to === 'manager' ? e.manager_id : e.recruiter_id
+  if (meta && !meta.max_connected) return 'в MAX не доставлено — Корсик не подключён к MAX'
+  if (!id) return `в MAX не доставлено — ${who} не назначен`
+  if (meta?.staff.find((x) => x.id === id)?.max_connected === false)
+    return `в MAX не доставлено — ${who} не подключил MAX`
+  return 'в MAX не доставлено'
+}
+
+function Notifications({ data }: { data: EmployeeCardData }) {
+  const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
+  const list = unique(data.notifications)
+  return (
+    <Card title="Кого Корсик уведомил">
+      {list.length === 0 ? (
+        <Empty>Корсик пока не писал руководителю и рекрутеру об этом новичке</Empty>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {list.map((n, i) => (
+            <div key={i} className="flex gap-3 rounded-xl bg-sky-50/60 p-3 text-sm">
+              <BellRing size={16} className="mt-0.5 shrink-0 text-sky-700" />
+              <div className="min-w-0 flex-1">
+                <div className="mb-0.5 text-xs text-ink/50">
+                  {n.to === 'manager' ? 'Руководителю' : 'Рекрутеру'} · {timeAgo(n.at)} ·{' '}
+                  <span className={clsx(!n.delivered && 'text-amber-700')}>
+                    {delivery(n, data.employee, meta)}
+                  </span>
+                </div>
+                <div className="whitespace-pre-wrap text-ink/80">{n.text}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -797,7 +827,7 @@ function TicketsTab({ data }: { data: EmployeeCardData }) {
   if (!data.tickets.length)
     return (
       <Card>
-        <Empty>Обращений не было</Empty>
+        <Empty>Если {data.employee.first_name} попросит помощи HR в чате, обращение появится здесь</Empty>
       </Card>
     )
   return (
@@ -810,7 +840,7 @@ function TicketsTab({ data }: { data: EmployeeCardData }) {
             className="-mx-2 flex items-center gap-3 rounded-xl px-2 py-3 hover:bg-ink/[0.025]"
           >
             <Badge tone={TICKET_KIND[t.kind]?.tone}>{TICKET_KIND[t.kind]?.label}</Badge>
-            <span className="min-w-0 flex-1 truncate text-sm">{t.subject}</span>
+            <span className="line-clamp-2 min-w-0 flex-1 text-sm">{ownWords(t.subject)}</span>
             <span className="text-xs text-ink/45">
               {t.status === 'open' ? 'открыто' : 'решено'} · {timeAgo(t.created_at)}
             </span>
