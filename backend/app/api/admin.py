@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import scheduler
-from app.analytics import digest, metrics
+from app.analytics import digest, metrics, support
 from app.analytics.sentiment import manager_topics
 from app.bot import backlog, escalation, progress, response_time
 from app.bot.progress import StepBlocked
@@ -192,7 +192,12 @@ async def list_employees(s: AsyncSession = Depends(get_session)):
     signals = await metrics.risk_signals(s, datetime.now(ZoneInfo("UTC")) - timedelta(days=30))
     open_t = {r for r in await s.scalars(select(Ticket.employee_id).where(Ticket.status == "open"))}
     return [
-        {**employee_view(e), "signals": len(signals.get(e.id, [])), "open_ticket": e.id in open_t}
+        {
+            **employee_view(e),
+            "signals": len(signals.get(e.id, [])),
+            "signal": support.top_reason(signals.get(e.id, [])),  # главная причина — видна напротив человека
+            "open_ticket": e.id in open_t,
+        }
         for e in emps
     ]
 
@@ -469,8 +474,14 @@ async def manager_card(code: str, emp_id: int, s: AsyncSession = Depends(get_ses
         "employee": manager_view(e),
         "signals": topics,
         "upcoming": upcoming,
+        # request — название рекомендации, которую выбрал HR («Подключить руководителя»), без ответов новичка
         "notifications": [
-            {"text": n.text, "delivered": n.payload.get("delivered"), "at": n.created_at.isoformat()}
+            {
+                "text": n.text,
+                "delivered": n.payload.get("delivered"),
+                "request": n.payload.get("request"),
+                "at": n.created_at.isoformat(),
+            }
             for n in notes
         ],
     }

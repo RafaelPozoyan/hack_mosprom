@@ -34,10 +34,23 @@ export type Employee = {
   survey: { id: string; q: number } | null
   in_dialog_with_hr: boolean
   signals?: number
+  /** Главная тревожная причина за 30 дней — видна напротив человека в списке. */
+  signal?: SupportReason | null
   open_ticket?: boolean
 }
 
-export type Signal = { flag: string; source: string; text: string; severity?: string; at: string }
+/** Причина тревоги простыми словами: откуда (опрос или сообщение), когда и срочно ли. Без ответа новичка. */
+export type SupportReason = { reason: string; source: string; at: string; urgent: boolean }
+export type SupportPerson = { employee_id: number; name: string; urgent: boolean; reasons: SupportReason[] }
+/** Карточка новичка: причины за 30 дней (today — есть ли за сутки) и можно ли подключить руководителя. */
+export type EmployeeSupport = {
+  reasons: SupportReason[]
+  today: boolean
+  manager: string | null
+  manager_in_max: boolean
+  refusal: string | null
+  options: { id: string; title: string; text: string }[]
+}
 
 export type Dashboard = {
   attention: {
@@ -61,7 +74,6 @@ export type Dashboard = {
   sentiment_weekly: { week: string; positive: number; neutral: number; negative: number }[]
   question_topics: { topic: string; count: number }[]
   knowledge_gaps: { question: string; count: number }[]
-  risk: { employee_id: number; name: string; site: string; stage: string; signals: Signal[]; high: boolean }[]
   scores: { topic: string; avg: number; n: number }[]
 }
 
@@ -227,7 +239,14 @@ export type AnalysisItem = {
   source: string
   at: string
 }
-export type Notification = { to?: string; text: string; delivered: boolean; at: string }
+/** request — рекомендация, которую HR выбрал для руководителя («Подключить руководителя»). */
+export type Notification = {
+  to?: string
+  text: string
+  delivered: boolean
+  request?: string | null
+  at: string
+}
 export type EmployeeCardData = {
   employee: Employee
   timeline: TimelineStep[]

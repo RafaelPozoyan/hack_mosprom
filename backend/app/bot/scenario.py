@@ -307,19 +307,20 @@ async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
 
 
 async def notify_audience(
-    s: AsyncSession, emp: Employee, audience: str, text: str, step_id: str | None
-) -> None:
-    """Push руководителю/рекрутеру: в MAX, если он подключён, и всегда — в журнал карточки сотрудника."""
+    s: AsyncSession, emp: Employee, audience: str, text: str, step_id: str | None, **extra
+) -> Message:
+    """Push руководителю/рекрутеру: в MAX, если он подключён, и всегда — в журнал карточки сотрудника.
+    extra — пометки в журнале (например, какую рекомендацию выбрал HR)."""
     staff = emp.manager if audience == "manager" else emp.recruiter
     delivered = await channels.notify_staff(staff, OutMessage(text=f"🐾 Корсик · {emp.full_name}\n\n{text}"))
-    s.add(
-        Message(
-            employee_id=emp.id,
-            direction="out",
-            author=f"to_{audience}",
-            text=text,
-            step_id=step_id,
-            payload={"delivered": delivered, "staff": staff.name if staff else None},
-        )
+    m = Message(
+        employee_id=emp.id,
+        direction="out",
+        author=f"to_{audience}",
+        text=text,
+        step_id=step_id,
+        payload={"delivered": delivered, "staff": staff.name if staff else None, **extra},
     )
+    s.add(m)
     await s.commit()
+    return m
