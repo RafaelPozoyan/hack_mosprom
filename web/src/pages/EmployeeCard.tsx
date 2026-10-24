@@ -74,7 +74,7 @@ export default function EmployeeCard() {
   const e = data.employee
   const { day, total } = probationDay(e)
   const concerns = concernsOf(data, support?.reasons ?? [])
-  const openTickets = data.tickets.filter((t) => t.status === 'open').length
+  const tasks = todo(data)
 
   return (
     <div className={clsx('mx-auto flex gap-6', demo ? 'max-w-[1500px]' : 'max-w-5xl')}>
@@ -100,7 +100,12 @@ export default function EmployeeCard() {
             {/* у приглашённого QR-код — в блоке «Нужно ваше действие»; остальным он нужен редко */}
             {e.status !== 'invited' && <MoreMenu onInvite={() => setInvite(true)} />}
           </div>
-          <SupportNote empId={e.id} name={e.full_name} onSent={refresh} />
+          <SupportNote
+            empId={e.id}
+            name={e.full_name}
+            onSent={refresh}
+            quiet={tasks.tickets.length + tasks.steps.length > 0 || tasks.invite}
+          />
           <div className="mt-5">
             {day < 1 ? (
               <div className="text-sm text-ink/60">
@@ -123,7 +128,7 @@ export default function EmployeeCard() {
           </div>
         </Card>
 
-        <Actions data={data} onDone={refresh} />
+        <Actions e={e} {...tasks} onDone={refresh} />
 
         <Tabs
           value={tab}
@@ -132,7 +137,7 @@ export default function EmployeeCard() {
             { id: 'journey', label: 'Путь адаптации' },
             { id: 'surveys', label: 'Опросы' },
             { id: 'signals', label: 'Что беспокоит', count: concerns.items.length },
-            { id: 'tickets', label: 'Обращения', count: openTickets },
+            { id: 'tickets', label: 'Обращения', count: tasks.tickets.length },
           ]}
         />
 
@@ -235,20 +240,34 @@ const early = (t: TimelineStep) => !!t.run_at && Date.parse(t.run_at) > Date.now
 const awaitsHr = (t: TimelineStep) => t.manual && t.status === 'manual' && !early(t)
 
 /** Тема обращения из опроса приходит как «вопрос → ответ»; HR важнее слова самого новичка. */
-const ownWords = (subject: string) => subject.slice(subject.lastIndexOf('→') + 1).trim()
+const ownWords = (subject: string) => subject.slice(subject.lastIndexOf('→') + 1).trim() || subject
 
-/** Только то, что HR может сделать сам: ответить на обращение, отправить шаг по команде, пригласить новичка.
- *  Заметная кнопка — у первой строки, у остальных — спокойные: главное действие на экране одно. */
-function Actions({ data, onDone }: { data: EmployeeCardData; onDone: () => void }) {
+/** Только то, что HR может сделать сам: ответить на обращение, отправить шаг по команде, пригласить новичка. */
+function todo(data: EmployeeCardData) {
   const e = data.employee
+  return {
+    tickets: data.tickets.filter((t) => t.status === 'open'),
+    steps: e.status === 'active' ? data.timeline.filter(awaitsHr) : [],
+    invite: e.status === 'invited',
+  }
+}
+
+/** Заметная кнопка — у первой строки, у остальных — спокойные: главное действие на экране одно. */
+function Actions({
+  e,
+  tickets,
+  steps,
+  invite,
+  onDone,
+}: ReturnType<typeof todo> & { e: Employee; onDone: () => void }) {
   const rows = [
-    ...data.tickets
-      .filter((t) => t.status === 'open')
-      .map((t) => (main: boolean) => <TicketAction key={`t${t.id}`} t={t} name={e.first_name} main={main} />),
-    ...(e.status === 'active' ? data.timeline.filter(awaitsHr) : []).map((t) => (main: boolean) => (
+    ...tickets.map((t) => (main: boolean) => (
+      <TicketAction key={`t${t.id}`} t={t} name={e.first_name} main={main} />
+    )),
+    ...steps.map((t) => (main: boolean) => (
       <StepAction key={t.step_id} t={t} empId={e.id} onDone={onDone} main={main} />
     )),
-    ...(e.status === 'invited' ? [(main: boolean) => <InviteAction key="invite" e={e} main={main} />] : []),
+    ...(invite ? [(main: boolean) => <InviteAction key="invite" e={e} main={main} />] : []),
   ]
   if (!rows.length) return null
   return (
@@ -580,6 +599,8 @@ function Fold({
   )
 }
 
+const ON_HOVER = 'opacity-0 transition group-hover:opacity-100 focus-within:opacity-100'
+
 /** Строка шага. Кнопки, которые сейчас не нужны, видны при наведении: демо-перемотка и отправка шага
  *  «по вашей команде» раньше срока. Шаг, которого HR ждёт сейчас, отправляют из блока «Нужно ваше действие». */
 function Step({
@@ -598,7 +619,6 @@ function Step({
   const st = STATUS[t.status] ?? STATUS.pending
   const Icon = st.icon
   const hr = awaitsHr(t)
-  const onHover = 'opacity-0 transition group-hover:opacity-100 focus-within:opacity-100'
   return (
     <li className="group flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
       <Icon size={18} className={clsx('mt-0.5 shrink-0', st.cls)} />
@@ -618,7 +638,7 @@ function Step({
       </div>
       <div className="flex shrink-0 items-center gap-3">
         {active && t.manual && !passed(t) && !hr && (
-          <span className={clsx('flex gap-2', early(t) && onHover)}>
+          <span className={clsx('flex gap-2', early(t) && ON_HOVER)}>
             {t.step_id === 'd3_plan' && <AttachPlan small run={run} busy={busy} variant="ghost" />}
             <Btn small onClick={() => run()} disabled={busy}>
               Отправить
@@ -626,7 +646,7 @@ function Step({
           </span>
         )}
         {demo && !t.manual && !passed(t) && (
-          <span className={onHover}>
+          <span className={ON_HOVER}>
             <Btn small demo onClick={() => run()} disabled={busy}>
               <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
             </Btn>
@@ -865,7 +885,7 @@ function TicketsTab({ data }: { data: EmployeeCardData }) {
           >
             <Badge tone={TICKET_KIND[t.kind]?.tone}>{TICKET_KIND[t.kind]?.label}</Badge>
             <span className="line-clamp-2 min-w-0 flex-1 text-sm">{ownWords(t.subject)}</span>
-            <span className="text-xs text-ink/45">
+            <span className="shrink-0 text-xs text-ink/45">
               {t.status === 'open' ? 'открыто' : 'решено'} · {timeAgo(t.created_at)}
             </span>
           </Link>
