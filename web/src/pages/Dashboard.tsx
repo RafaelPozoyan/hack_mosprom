@@ -1,11 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, BookPlus, CheckCircle2 } from 'lucide-react'
+import { BookPlus } from 'lucide-react'
 import { Link } from 'react-router'
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api, fmtDate, type Dashboard as D } from '../api'
-import { FirstReplyStat, OverdueTickets } from '../components/ResponseTime'
+import { FirstReplyStat, WaitingTickets } from '../components/ResponseTime'
 import SupportToday from '../components/SupportToday'
-import { Avatar, Badge, Card, Empty, Stat, TICKET_KIND, plural, timeAgo } from '../components/ui'
+import { Badge, Card, Empty, Stat, plural } from '../components/ui'
 
 const pct = (v: number | null) => (v === null ? '—' : `${v}%`)
 
@@ -36,46 +36,7 @@ export default function Dashboard() {
         <p className="mt-1 text-sm text-ink/50 first-letter:uppercase">{today}</p>
       </div>
 
-      <OverdueTickets />
-
-      <Card
-        title="Требует внимания"
-        subtitle={data.attention.length ? 'Обращения новичков, которые Корсик передал вам' : undefined}
-        action={
-          data.attention.length > 0 && (
-            <Link
-              to="/tickets"
-              className="flex items-center gap-1 text-sm font-medium text-sky-700 hover:underline"
-            >
-              Все обращения <ArrowRight size={15} />
-            </Link>
-          )
-        }
-      >
-        {data.attention.length === 0 ? (
-          <Empty icon={<CheckCircle2 className="text-lime-2" />}>Всё спокойно — новых обращений нет</Empty>
-        ) : (
-          <div className="flex flex-col divide-y divide-ink/[0.06]">
-            {data.attention.map((t) => (
-              <Link
-                key={t.id}
-                to={`/tickets?id=${t.id}`}
-                className="-mx-2 flex items-center gap-3 rounded-xl px-2 py-3 transition hover:bg-ink/[0.025]"
-              >
-                <Avatar name={t.employee} size={36} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{t.employee}</span>
-                    <Badge tone={TICKET_KIND[t.kind]?.tone}>{TICKET_KIND[t.kind]?.label}</Badge>
-                  </div>
-                  <div className="truncate text-sm text-ink/60">{t.subject}</div>
-                </div>
-                <span className="shrink-0 text-xs text-ink/40">{timeAgo(t.created_at)}</span>
-              </Link>
-            ))}
-          </div>
-        )}
-      </Card>
+      <WaitingTickets />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <Stat label="Новички на адаптации" value={k.newcomers} />
