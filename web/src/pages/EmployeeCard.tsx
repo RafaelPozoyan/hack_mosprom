@@ -8,6 +8,7 @@ import {
   Clock,
   Copy,
   Download,
+  Ellipsis,
   FileText,
   Hand,
   MessageCircleReply,
@@ -77,30 +78,33 @@ export default function EmployeeCard() {
     <div className={clsx('mx-auto flex gap-6', demo ? 'max-w-[1500px]' : 'max-w-5xl')}>
       <div className="flex min-w-0 flex-1 flex-col gap-5">
         <Card>
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-4">
             <Avatar name={e.full_name} size={56} />
             <div className="min-w-0 flex-1">
               <h1 className="text-xl font-semibold tracking-tight">{e.full_name}</h1>
               <div className="text-sm text-ink/55">
                 {e.position || 'Должность не указана'} · {siteName(e.site_code)}
               </div>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {e.address_form && <Badge>общается на «{e.address_form === 'vy' ? 'вы' : 'ты'}»</Badge>}
-                {e.in_dialog_with_hr && <Badge tone="blue">сейчас в диалоге с HR</Badge>}
+              <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-ink/55">
                 <TeamPicker e={e} onDone={refresh} />
+                {e.address_form && (
+                  <span title="Как Корсик обращается к новичку — новичок выбрал сам">
+                    · на «{e.address_form === 'vy' ? 'вы' : 'ты'}»
+                  </span>
+                )}
+                {e.in_dialog_with_hr && <Badge tone="blue">сейчас в диалоге с HR</Badge>}
               </div>
             </div>
-            {e.status !== 'invited' && (
-              <Btn variant="ghost" onClick={() => setInvite(true)}>
-                <QrCode size={16} /> QR-приглашение
-              </Btn>
-            )}
+            {/* у приглашённого QR-код — в блоке «Нужно ваше действие»; остальным он нужен редко */}
+            {e.status !== 'invited' && <MoreMenu onInvite={() => setInvite(true)} />}
           </div>
           <SupportNote empId={e.id} name={e.full_name} onSent={refresh} />
           <div className="mt-5">
             {day < 1 ? (
               <div className="text-sm text-ink/60">
-                До выхода на работу: {1 - day} дн.
+                {1 - day === 1
+                  ? 'Выходит на работу завтра.'
+                  : `Выходит на работу через ${1 - day} ${plural(1 - day, 'день', 'дня', 'дней')}.`}
                 {e.status !== 'invited' && ' Корсик уже на связи и помогает подготовиться.'}
               </div>
             ) : (
@@ -149,6 +153,49 @@ export default function EmployeeCard() {
         </div>
       )}
       {invite && <InviteModal e={e} onClose={() => setInvite(false)} />}
+    </div>
+  )
+}
+
+/** Редкие действия в шапке: сейчас одно — снова показать QR-код и ссылку-приглашение. */
+function MoreMenu({ onInvite }: { onInvite: () => void }) {
+  const [open, setOpen] = useState(false)
+  const box = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const outside = (ev: MouseEvent) => !box.current?.contains(ev.target as Node) && setOpen(false)
+    const esc = (ev: KeyboardEvent) => ev.key === 'Escape' && setOpen(false)
+    document.addEventListener('mousedown', outside)
+    document.addEventListener('keydown', esc)
+    return () => {
+      document.removeEventListener('mousedown', outside)
+      document.removeEventListener('keydown', esc)
+    }
+  }, [open])
+  return (
+    <div ref={box} className="relative self-start">
+      <button
+        aria-label="Ещё действия"
+        aria-expanded={open}
+        title="Ещё действия"
+        onClick={() => setOpen(!open)}
+        className="grid size-9 place-items-center rounded-xl text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink"
+      >
+        <Ellipsis size={18} />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-10 mt-1 w-60 rounded-xl border border-ink/10 bg-white p-1 shadow-lg">
+          <button
+            onClick={() => {
+              setOpen(false)
+              onInvite()
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm hover:bg-ink/[0.04]"
+          >
+            <QrCode size={16} className="text-ink/50" /> QR-приглашение
+          </button>
+        </div>
+      )}
     </div>
   )
 }

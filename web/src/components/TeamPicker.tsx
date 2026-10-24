@@ -1,23 +1,29 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { ApiError, api, type Employee, type Meta } from '../api'
-import { Badge, Btn, Field, Modal, inputCls } from './ui'
+import { Btn, Field, Modal, inputCls } from './ui'
 
 // Руководитель и рекрутер новичка в его карточке. Новые обращения уходят тому рекрутеру, кто указан сейчас:
 // сервер берёт получателя из карточки в момент отправки (backend/app/api/team.py, bot/escalation.py).
 
+/** Строка шапки «Руководитель: … · Рекрутер: …» и «изменить». Не назначенный человек заметен сразу. */
 export default function TeamPicker({ e, onDone }: { e: Employee; onDone: () => void }) {
   const [open, setOpen] = useState(false)
   return (
     <>
-      <Badge tone={e.manager ? 'gray' : 'amber'}>
-        {e.manager ? `руководитель: ${e.manager}` : 'руководитель не назначен'}
-      </Badge>
-      <Badge tone={e.recruiter ? 'gray' : 'amber'}>
-        {e.recruiter ? `рекрутер: ${e.recruiter}` : 'рекрутер не назначен'}
-      </Badge>
-      <button onClick={() => setOpen(true)} className="px-1 text-xs font-medium text-ink/55 hover:text-ink">
-        изменить
+      <span>
+        Руководитель: <Person name={e.manager} />
+      </span>
+      <span>
+        · Рекрутер: <Person name={e.recruiter} />
+      </span>
+      <button
+        onClick={() => setOpen(true)}
+        title="Изменить руководителя и рекрутера"
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-ink/45 transition hover:bg-ink/[0.05] hover:text-ink"
+      >
+        <Pencil size={12} /> изменить
       </button>
       {open && (
         <TeamModal
@@ -30,6 +36,14 @@ export default function TeamPicker({ e, onDone }: { e: Employee; onDone: () => v
         />
       )}
     </>
+  )
+}
+
+function Person({ name }: { name: string | null }) {
+  return name ? (
+    <span className="text-ink/80">{name}</span>
+  ) : (
+    <span className="text-amber-700">не назначен</span>
   )
 }
 
