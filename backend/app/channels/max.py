@@ -142,8 +142,13 @@ class MaxClient:
         await self._call("PUT", "/messages", params={"message_id": mid}, json=await self._body(msg))
 
     async def answer_callback(self, callback_id: str, notification: str | None = None) -> None:
-        body = {"notification": notification} if notification else {}
-        await self._call("POST", "/answers", params={"callback_id": callback_id}, json=body)
+        # MAX принимает ответ только с message или notification (иначе 400 proto.payload); без них подтверждать
+        # нечем — клиент сам снимает ожидание с кнопки (проверено в MAX 24.10)
+        if not notification:
+            return
+        await self._call(
+            "POST", "/answers", params={"callback_id": callback_id}, json={"notification": notification}
+        )
 
     # --- события -----------------------------------------------------------------------------------
 
