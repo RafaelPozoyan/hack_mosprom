@@ -567,3 +567,32 @@ async def test_legacy_survey_resume_replaces_existing_reminders(db):
         assert emp.state["required_step"]["key"]
         assert all(j.status == "cancelled" for j in old)
         assert await s.scalar(select(func.count()).select_from(Job).where(Job.status == "pending")) == 3
+
+
+@pytest.mark.asyncio
+async def test_demo_fast_forwards_required_reminders_and_escalation(db, monkeypatch):
+    jobs = await start_required(db)
+    executed = asyncio.Event()
+
+    async def run(job_id):
+        try:
+            await scheduler.run_job(job_id)
+        finally:
+            executed.set()
+
+    monkeypatch.setattr(demo, "run_job", run)
+    for job in jobs:
+        executed.clear()
+        async with db.session() as s:
+            result = await demo.run_next(1, s)
+        await asyncio.wait_for(executed.wait(), timeout=5)
+        assert result["ok"] and result["run_at"] == job.run_at.isoformat()
+        async with db.session() as s:
+            current = await s.get(Job, job.id)
+            assert current.status == "done" and current.run_at == job.run_at
+    async with db.session() as s:
+        reminders = await s.scalar(
+            select(func.count()).select_from(Message).where(Message.text.contains("Напоминаю"))
+        )
+        assert reminders == 2
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == 1
