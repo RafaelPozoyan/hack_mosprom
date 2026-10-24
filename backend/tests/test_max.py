@@ -2,9 +2,10 @@
 
 import asyncio
 
-from app.bot.updates import _button_text
+from app.bot.updates import _button_text, _load_marker, _marker_file
 from app.channels.base import Button, OutMessage
 from app.channels.max import MaxClient, _keyboard
+from app.config import settings
 
 
 def test_keyboard_matches_docs():
@@ -51,3 +52,12 @@ def test_callback_button_text_is_recovered_from_message():
     }
     assert _button_text(message, "b:welcome:1:0:1") == "На ВЫ"
     assert _button_text(message, "unknown") == ""
+
+
+def test_poll_marker_survives_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings(), "data_dir", tmp_path)
+    assert _load_marker() is None  # первый запуск: позиции ещё нет
+    _marker_file().write_text("1792845123")
+    assert _load_marker() == 1792845123
+    _marker_file().write_text("мусор")
+    assert _load_marker() is None  # испорченный файл не роняет поллинг
