@@ -4,6 +4,7 @@ import {
   BellRing,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Copy,
   Download,
@@ -44,6 +45,7 @@ import {
   SEVERITY,
   TICKET_KIND,
   Tabs,
+  plural,
   siteName,
   timeAgo,
   useDemo,
@@ -377,25 +379,45 @@ function AttachPlan({
 
 // --- путь адаптации ----------------------------------------------------------------------------------
 
-const STATUS: Record<string, { label: string; icon: typeof Clock; cls: string }> = {
+// Значок и подпись статуса шага. Подпись серая, если не сказано иначе; date — показывать ли рядом
+// плановое время (у отправленных и пропущенных шагов оно уже ничего не говорит).
+type StepStatus = { label: string; icon: typeof Clock; cls: string; text?: string; date?: boolean }
+const WAIT = { icon: Clock, cls: 'text-amber-600', text: 'text-amber-700' } // ждём новичка или его ответа
+const STATUS: Record<string, StepStatus> = {
   sent: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
   done: { label: 'отправлено', icon: CheckCircle2, cls: 'text-lime-2' },
-  pending: { label: 'запланировано', icon: Clock, cls: 'text-ink/35' },
+  pending: { label: 'запланировано', icon: Clock, cls: 'text-ink/35', date: true },
   running: { label: 'отправляется', icon: Clock, cls: 'text-sky' },
-  waiting: { label: 'ждём обязательный ответ', icon: Clock, cls: 'text-amber-600' },
-  await_start: { label: 'ждём запуска бота по QR', icon: Clock, cls: 'text-amber-600' },
-  blocked: { label: 'после обязательного ответа', icon: Clock, cls: 'text-amber-600' },
-  manual: { label: 'по вашей команде', icon: Hand, cls: 'text-amber-600' },
-  failed: { label: 'не удалось отправить', icon: MinusCircle, cls: 'text-rose-500' },
+  waiting: { label: 'ждём обязательный ответ', ...WAIT },
+  await_start: { label: 'приглашение ещё не открыто', ...WAIT },
+  blocked: { label: 'после обязательного ответа', ...WAIT, date: true },
+  manual: { label: 'по вашей команде', icon: Hand, cls: 'text-amber-600', date: true },
+  failed: {
+    label: 'не удалось отправить',
+    icon: MinusCircle,
+    cls: 'text-rose-500',
+    text: 'text-rose-600',
+    date: true,
+  },
   skipped: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
   cancelled: { label: 'пропущено', icon: MinusCircle, cls: 'text-ink/25' },
 }
 
+/** Шаг уже позади: отправлен или пропущен. Такие шаги свёрнуты, открыты текущий и следующие. */
+const passed = (t: TimelineStep) => ['sent', 'done', 'skipped', 'cancelled'].includes(t.status)
+const skipped = (t: TimelineStep) => t.status === 'skipped' || t.status === 'cancelled'
+
+const byPhase = (steps: TimelineStep[]) =>
+  PHASES.map((p) => ({ phase: p, items: steps.filter((s) => s.phase === p) })).filter((g) => g.items.length)
+
 function Journey({ steps, empId, onDone }: { steps: TimelineStep[]; empId: number; onDone: () => void }) {
-  const groups = PHASES.map((p) => ({ phase: p, items: steps.filter((s) => s.phase === p) })).filter(
-    (g) => g.items.length,
-  )
+  const done = steps.filter(passed)
+  const missed = done.filter(skipped).length
+  const ahead = byPhase(steps.filter((s) => !passed(s)))
+  const later = ahead.slice(2).flatMap((g) => g.items) // открыты текущий этап и следующий, дальние — свёрнуты
+  const last = later.at(-1)?.run_at
   const waiting = steps.find((s) => s.status === 'waiting')
+  const step = (t: TimelineStep) => <Step key={t.step_id} t={t} empId={empId} onDone={onDone} />
   return (
     <div className="flex flex-col gap-4">
       {waiting && (
@@ -406,16 +428,67 @@ function Journey({ steps, empId, onDone }: { steps: TimelineStep[]; empId: numbe
           </p>
         </Card>
       )}
-      {groups.map((g) => (
+      {done.length > 0 && (
+        <Fold
+          icon={<CheckCircle2 size={18} className="shrink-0 text-lime-2" />}
+          title={`Пройдено ${done.length} из ${steps.length}`}
+          note={missed > 0 && `(${missed} ${plural(missed, 'пропущен', 'пропущено', 'пропущено')})`}
+          steps={done}
+          step={step}
+        />
+      )}
+      {ahead.slice(0, 2).map((g) => (
         <Card key={g.phase} title={g.phase}>
-          <ol className="flex flex-col">
-            {g.items.map((t) => (
-              <Step key={t.step_id} t={t} empId={empId} onDone={onDone} />
-            ))}
-          </ol>
+          <ol className="flex flex-col">{g.items.map(step)}</ol>
         </Card>
       ))}
+      {later.length > 0 && (
+        <Fold
+          icon={<Clock size={18} className="shrink-0 text-ink/35" />}
+          title={`Дальше по плану: ${later.length} ${plural(later.length, 'шаг', 'шага', 'шагов')}`}
+          note={last && `до ${fmtDate(last)}`}
+          steps={later}
+          step={step}
+        />
+      )}
     </div>
+  )
+}
+
+/** Свёрнутая часть ленты: одна строка-итог, по нажатию — шаги по этапам. */
+function Fold({
+  icon,
+  title,
+  note,
+  steps,
+  step,
+}: {
+  icon: ReactNode
+  title: string
+  note: ReactNode
+  steps: TimelineStep[]
+  step: (t: TimelineStep) => ReactNode
+}) {
+  return (
+    <Card>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center gap-3 text-[15px] font-semibold select-none">
+          {icon}
+          <span>
+            {title} {note && <span className="font-normal text-ink/50">{note}</span>}
+          </span>
+          <ChevronDown size={18} className="ml-auto text-ink/40 transition group-open:rotate-180" />
+        </summary>
+        <div className="mt-4 flex flex-col gap-4">
+          {byPhase(steps).map((g) => (
+            <div key={g.phase}>
+              <h3 className="text-[13px] font-semibold text-ink/50">{g.phase}</h3>
+              <ol className="flex flex-col">{g.items.map(step)}</ol>
+            </div>
+          ))}
+        </div>
+      </details>
+    </Card>
   )
 }
 
@@ -426,19 +499,17 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
   const Icon = st.icon
   const sent = t.status === 'sent' || t.status === 'done'
   const obsolete = t.status === 'skipped' && Boolean(t.status_note)
+  const hr = awaitsHr(t)
   return (
     <li className="flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
       <Icon size={18} className={clsx('mt-0.5 shrink-0', st.cls)} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className={clsx('font-medium', sent && 'text-ink/60')}>{t.title}</span>
+          <span className={clsx('font-medium', passed(t) && 'text-ink/60')}>{t.title}</span>
           {t.audience === 'manager' && <Badge tone="blue">руководителю</Badge>}
           {t.audience === 'recruiter' && <Badge tone="blue">рекрутеру</Badge>}
         </div>
         <div className="mt-0.5 line-clamp-1 text-xs text-ink/45">{t.preview}</div>
-        {t.run_at && ['waiting', 'blocked', 'await_start'].includes(t.status) && (
-          <div className="mt-1 text-xs text-amber-700">{st.label}</div>
-        )}
         {t.status_note && <div className="mt-1 text-xs text-ink/60">{t.status_note}</div>}
         {error && (
           <div role="alert" className="mt-2 text-sm text-rose-600">
@@ -446,21 +517,28 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
           </div>
         )}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="text-xs text-ink/45">{t.run_at ? fmtDateTime(t.run_at) : st.label}</span>
-        {t.manual && !sent && !obsolete && !awaitsHr(t) && (
-          <>
+      <div className="flex shrink-0 items-center gap-3">
+        {t.manual && !sent && !obsolete && !hr && (
+          <span className="flex gap-2">
             {t.step_id === 'd3_plan' && <AttachPlan small run={run} busy={busy} variant="ghost" />}
             <Btn small onClick={() => run()} disabled={busy}>
               Отправить
             </Btn>
-          </>
+          </span>
         )}
         {demo && !t.manual && !sent && !obsolete && (
           <Btn small demo onClick={() => run()} disabled={busy}>
             <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
           </Btn>
         )}
+        <div className="text-right text-xs">
+          <div className={hr ? WAIT.text : (st.text ?? 'text-ink/50')}>
+            {hr ? 'ждёт вашей команды' : st.label}
+          </div>
+          {st.date && t.run_at && (
+            <div className="mt-0.5 text-ink/40 tabular-nums">{fmtDateTime(t.run_at)}</div>
+          )}
+        </div>
       </div>
     </li>
   )
