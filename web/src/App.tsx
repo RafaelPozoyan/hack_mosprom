@@ -5,7 +5,7 @@ import { useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 import { api, type Ticket } from './api'
 import AccessGate from './components/AccessGate'
-import { DemoContext } from './components/ui'
+import { DemoContext, KorsikMark } from './components/ui'
 import Dashboard from './pages/Dashboard'
 import DigestPage from './pages/Digest'
 import EmployeeCard from './pages/EmployeeCard'
@@ -70,7 +70,7 @@ function Panel({ logout, protectedPanel }: { logout: () => void; protectedPanel:
       <div className="flex min-h-screen">
         <aside className="sticky top-0 flex h-screen w-60 shrink-0 flex-col bg-ink px-4 py-5 text-white">
           <div className="mb-7 flex items-center gap-2.5 px-2">
-            <div className="grid size-10 place-items-center rounded-2xl bg-lime text-xl">🐾</div>
+            <KorsikMark />
             <div className="leading-tight">
               <div className="text-[15px] font-semibold">Корсик</div>
               <div className="text-xs text-white/50">адаптация новичков</div>

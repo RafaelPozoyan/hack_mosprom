@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
 import { Link, Route, Routes, useParams } from 'react-router'
 import { api, fmtDateTime, type ManagerCardData, type ManagerHome, type Meta } from '../api'
-import { Avatar, Card, Empty, siteName, timeAgo } from '../components/ui'
+import { Avatar, Card, Empty, KorsikMark, siteName, timeAgo } from '../components/ui'
 import { StageCell } from './Employees'
 
 // Руководитель видит прогресс и рекомендации по своим новичкам. Фильтрует сервер (/api/m/<код>): свободные ответы
@@ -192,7 +192,7 @@ export function ManagerLink() {
   return (
     <div className="min-h-screen px-5 py-7">
       <div className="mx-auto mb-6 flex max-w-4xl items-center gap-2.5">
-        <div className="grid size-9 place-items-center rounded-2xl bg-lime text-lg">🐾</div>
+        <KorsikMark className="size-9 rounded-2xl" />
         <div className="text-[15px] font-semibold">Корсик</div>
       </div>
       <Routes>
