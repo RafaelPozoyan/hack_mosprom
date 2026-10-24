@@ -82,6 +82,7 @@ function TeamModal({ e, onClose, onDone }: { e: Employee; onClose: () => void; o
         <Field label="Рекрутер" hint="Получает обращения новичка, которые Корсик передаёт людям">
           {select('recruiter_id', 'recruiter')}
         </Field>
+        <p className="text-xs text-ink/50">Нет нужного человека — добавьте его на экране «Команда».</p>
         {error && (
           <div role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">
             {error}

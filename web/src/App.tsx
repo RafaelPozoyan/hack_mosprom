@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { BookOpen, Inbox, LayoutDashboard, Map, Smile, Users } from 'lucide-react'
+import { BookOpen, Contact, Inbox, LayoutDashboard, Map, Smile, Users } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 import { api, type Ticket } from './api'
@@ -13,20 +13,22 @@ import Employees from './pages/Employees'
 import Knowledge from './pages/Knowledge'
 import ManagerPreview, { ManagerLink } from './pages/Manager'
 import Scenario from './pages/Scenario'
+import Team from './pages/Team'
 import Tickets from './pages/Tickets'
 
 // Роли из кейса: HR-менеджер, руководитель подразделения, руководитель управления по подбору.
 // Новый сотрудник общается с Корсиком в MAX — его сторону показывает чат в карточке сотрудника.
 const ROLES = {
-  hr: { label: 'HR-менеджер', home: '/', nav: ['/', '/employees', '/tickets', '/kb', '/journey'] },
+  hr: { label: 'HR-менеджер', home: '/', nav: ['/', '/employees', '/team', '/tickets', '/kb', '/journey'] },
   manager: { label: 'Руководитель', home: '/my', nav: ['/my'] },
-  head: { label: 'Руководитель подбора', home: '/mood', nav: ['/mood', '/', '/employees'] },
+  head: { label: 'Руководитель подбора', home: '/mood', nav: ['/mood', '/', '/employees', '/team'] },
 } as const
 type Role = keyof typeof ROLES
 
 const NAV: Record<string, { label: string; icon: typeof Users }> = {
   '/': { label: 'Сегодня', icon: LayoutDashboard },
   '/employees': { label: 'Сотрудники', icon: Users },
+  '/team': { label: 'Команда', icon: Contact },
   '/my': { label: 'Мои новички', icon: Users },
   '/tickets': { label: 'Обращения', icon: Inbox },
   '/kb': { label: 'База знаний', icon: BookOpen },
@@ -168,6 +170,7 @@ function Panel({ logout, protectedPanel }: { logout: () => void; protectedPanel:
             />
             <Route path="/my" element={<ManagerPreview />} />
             <Route path="/my/:id" element={<ManagerPreview card />} />
+            <Route path="/team" element={<Team />} />
             <Route path="/tickets" element={<Tickets />} />
             <Route path="/kb" element={<Knowledge />} />
             <Route path="/mood" element={<DigestPage />} />
