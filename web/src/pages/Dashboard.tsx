@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, BookPlus } from 'lucide-react'
+import { ArrowRight, BookPlus, CheckCircle2 } from 'lucide-react'
 import { Link, useNavigate } from 'react-router'
 import { api, type Dashboard as D, type Employee } from '../api'
 import { MoodWeek } from '../components/Mood'
 import {
   FirstReplyStat,
   WaitingTickets,
+  employeeWords,
   firstInLine,
   unanswered,
   useOpenTickets,
@@ -98,6 +99,71 @@ function Summary() {
   )
 }
 
+/** Вопросы к Корсику за 30 дней: на что он не нашёл ответа (это можно исправить) и о чём спрашивают чаще. */
+function Questions({ d }: { d: D }) {
+  const gaps = d.knowledge_gaps.slice(0, 5)
+  return (
+    <Card
+      title="Вопросы новичков"
+      subtitle="За 30 дней"
+      action={
+        gaps.length > 0 && (
+          <Link
+            to="/kb"
+            className="flex items-center gap-1.5 text-sm font-medium text-sky-700 hover:underline"
+          >
+            <BookPlus size={15} /> Добавить ответ
+          </Link>
+        )
+      }
+    >
+      {d.kpi.questions === 0 ? (
+        <Empty>
+          Вопросов пока не было
+          <span className="text-xs text-ink/40">
+            Когда новички спросят Корсика, здесь появятся их вопросы
+          </span>
+        </Empty>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {gaps.length ? (
+            <div>
+              <h3 className="mb-1.5 text-[13px] text-ink/50">Корсик не нашёл ответа</h3>
+              {gaps.map((g) => (
+                <div key={g.question} className="flex items-baseline justify-between gap-4 py-1 text-sm">
+                  <span>«{employeeWords(g.question)}»</span>
+                  {g.count > 1 && (
+                    <span className="shrink-0 text-xs text-ink/45">
+                      спросили {g.count} {plural(g.count, 'раз', 'раза', 'раз')}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-ink/70">
+              <CheckCircle2 size={16} className="text-lime-2" /> Корсик ответил на все вопросы
+            </div>
+          )}
+          {d.question_topics.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-[13px] text-ink/50">О чём спрашивают</h3>
+              <div className="flex flex-wrap gap-2">
+                {d.question_topics.map((t) => (
+                  <Badge key={t.topic}>
+                    <span className="inline-block first-letter:uppercase">{t.topic}</span>
+                    <span className="text-ink/45 tabular-nums">{t.count}</span>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export default function Dashboard() {
   const { data } = useQuery({
     queryKey: ['dashboard'],
@@ -109,6 +175,7 @@ export default function Dashboard() {
   // Доля в API округлена до процента; при числе вопросов меньше 100 число ответов восстанавливается из неё точно.
   const answered = k.ai_resolved_pct != null ? Math.round((k.ai_resolved_pct * k.questions) / 100) : 0
   const missed = k.questions - answered
+  const stages = data.stages.filter((s) => s.count > 0)
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -146,57 +213,30 @@ export default function Dashboard() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <SupportToday />
-
-        <Card title="Настроение новичков" subtitle="По ответам новичков в опросах и чате">
-          <MoodWeek weeks={data.sentiment_weekly} />
-        </Card>
+        <Questions d={data} />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card title="Где сейчас новички">
-          <div className="flex flex-col gap-2.5">
-            {data.stages.map((s) => (
-              <div key={s.stage} className="flex items-center justify-between text-sm">
-                <span className="text-ink/70 first-letter:uppercase">{s.stage}</span>
-                <span className="font-semibold tabular-nums">{s.count}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
-        <Card title="О чём спрашивают">
-          {data.question_topics.length === 0 ? (
-            <Empty>Вопросов пока не было</Empty>
-          ) : (
-            <div className="flex flex-col gap-2.5">
-              {data.question_topics.map((t) => (
-                <div key={t.topic} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="text-ink/70 first-letter:uppercase">{t.topic}</span>
-                  <Badge>{t.count}</Badge>
-                </div>
+      <Card title="Настроение новичков" subtitle="По ответам новичков в опросах и чате">
+        <MoodWeek weeks={data.sentiment_weekly} />
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+          <h2 className="text-[15px] font-semibold">Где сейчас новички</h2>
+          {stages.length ? (
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink/70">
+              {stages.map((s) => (
+                <span key={s.stage}>
+                  <span className="inline-block first-letter:uppercase">{s.stage}</span>{' '}
+                  <span className="font-semibold text-ink tabular-nums">{s.count}</span>
+                </span>
               ))}
             </div>
-          )}
-        </Card>
-        <Card title="Чего не хватает в базе знаний" subtitle="Корсик не нашёл ответ и передал вопрос HR">
-          {data.knowledge_gaps.length === 0 ? (
-            <Empty>Корсик ответил на все вопросы</Empty>
           ) : (
-            <div className="flex flex-col gap-2">
-              {data.knowledge_gaps.slice(0, 5).map((g) => (
-                <div key={g.question} className="text-sm text-ink/75 first-letter:uppercase">
-                  «{g.question}»
-                </div>
-              ))}
-              <Link
-                to="/kb"
-                className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-sky-700 hover:underline"
-              >
-                <BookPlus size={15} /> Добавить документ с ответом
-              </Link>
-            </div>
+            <span className="text-sm text-ink/50">Новичков пока нет</span>
           )}
-        </Card>
-      </div>
+        </div>
+      </Card>
     </div>
   )
 }
