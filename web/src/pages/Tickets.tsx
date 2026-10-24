@@ -10,7 +10,11 @@ export default function Tickets() {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const [status, setStatus] = useState<'open' | 'closed'>('open')
-  const { data: list = [] } = useQuery({ queryKey: ['tickets', status], queryFn: () => api.get<Ticket[]>(`/api/tickets?status=${status}`), refetchInterval: 10_000 })
+  const { data: list = [] } = useQuery({
+    queryKey: ['tickets', status],
+    queryFn: () => api.get<Ticket[]>(`/api/tickets?status=${status}`),
+    refetchInterval: 10_000,
+  })
   const selected = Number(params.get('id')) || list[0]?.id
 
   useEffect(() => {
@@ -30,7 +34,11 @@ export default function Tickets() {
           action={
             <div className="flex rounded-xl bg-ink/[0.05] p-0.5 text-[13px]">
               {(['open', 'closed'] as const).map((s) => (
-                <button key={s} onClick={() => setStatus(s)} className={clsx('rounded-lg px-3 py-1', status === s && 'bg-white font-medium shadow-sm')}>
+                <button
+                  key={s}
+                  onClick={() => setStatus(s)}
+                  className={clsx('rounded-lg px-3 py-1', status === s && 'bg-white font-medium shadow-sm')}
+                >
                   {s === 'open' ? 'Открытые' : 'Решённые'}
                 </button>
               ))}
@@ -39,14 +47,19 @@ export default function Tickets() {
           title={status === 'open' ? `Ждут ответа: ${list.length}` : 'Решённые'}
         >
           {list.length === 0 ? (
-            <Empty icon={<CheckCircle2 className="text-lime-2" />}>{status === 'open' ? 'Все обращения разобраны' : 'Пока пусто'}</Empty>
+            <Empty icon={<CheckCircle2 className="text-lime-2" />}>
+              {status === 'open' ? 'Все обращения разобраны' : 'Пока пусто'}
+            </Empty>
           ) : (
             <div className="-mx-2 flex flex-col">
               {list.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => setParams({ id: String(t.id) })}
-                  className={clsx('flex gap-3 rounded-xl px-2 py-3 text-left transition', t.id === selected ? 'bg-ink/[0.05]' : 'hover:bg-ink/[0.025]')}
+                  className={clsx(
+                    'flex gap-3 rounded-xl px-2 py-3 text-left transition',
+                    t.id === selected ? 'bg-ink/[0.05]' : 'hover:bg-ink/[0.025]',
+                  )}
                 >
                   <Avatar name={t.employee} size={34} />
                   <div className="min-w-0 flex-1">
@@ -64,7 +77,13 @@ export default function Tickets() {
             </div>
           )}
         </Card>
-        {selected ? <TicketView id={selected} /> : <Card><Empty icon={<Inbox className="text-ink/30" />}>Выберите обращение слева</Empty></Card>}
+        {selected ? (
+          <TicketView id={selected} />
+        ) : (
+          <Card>
+            <Empty icon={<Inbox className="text-ink/30" />}>Выберите обращение слева</Empty>
+          </Card>
+        )}
       </div>
     </div>
   )
@@ -72,7 +91,10 @@ export default function Tickets() {
 
 function TicketView({ id }: { id: number }) {
   const qc = useQueryClient()
-  const { data: t } = useQuery({ queryKey: ['ticket', id], queryFn: () => api.get<Ticket>(`/api/tickets/${id}`) })
+  const { data: t } = useQuery({
+    queryKey: ['ticket', id],
+    queryFn: () => api.get<Ticket>(`/api/tickets/${id}`),
+  })
   const [text, setText] = useState('')
   if (!t) return null
   const refresh = () => {
@@ -92,18 +114,45 @@ function TicketView({ id }: { id: number }) {
   const preparing = t.summary.startsWith('ИИ готовит')
   return (
     <Card
-      title={<Link to={`/employees/${t.employee_id}`} className="hover:underline">{t.employee}</Link>}
+      title={
+        <Link to={`/employees/${t.employee_id}`} className="hover:underline">
+          {t.employee}
+        </Link>
+      }
       subtitle={`${siteName(t.site)} · ${fmtDateTime(t.created_at)}`}
-      action={t.status === 'open' && <Btn variant="ghost" small onClick={close}><CheckCircle2 size={14} /> Решено</Btn>}
+      action={
+        t.status === 'open' && (
+          <Btn variant="ghost" small onClick={close}>
+            <CheckCircle2 size={14} /> Решено
+          </Btn>
+        )
+      }
     >
       <div className="mb-4 rounded-2xl bg-lime/15 p-4 text-sm">
-        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-ink/60"><Sparkles size={14} /> Суть обращения — подготовил Корсик</div>
-        <div className={clsx('whitespace-pre-wrap', preparing && 'text-ink/50')}>{preparing ? 'Корсик собирает контекст переписки…' : t.summary}</div>
+        <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-ink/60">
+          <Sparkles size={14} /> Суть обращения — подготовил Корсик
+        </div>
+        <div className={clsx('whitespace-pre-wrap', preparing && 'text-ink/50')}>
+          {preparing ? 'Корсик собирает контекст переписки…' : t.summary}
+        </div>
       </div>
       <div className="flex max-h-[440px] flex-col gap-2 overflow-y-auto rounded-2xl bg-ink/[0.03] p-3">
         {t.messages?.map((m) => (
-          <div key={m.id} className={clsx('max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap', m.author === 'employee' ? 'self-end bg-[#d9f2a6]' : m.author === 'hr' ? 'bg-sky-100' : 'bg-white')}>
-            <div className="mb-0.5 text-[11px] text-ink/45">{m.author === 'employee' ? t.employee : m.author === 'hr' ? 'HR' : 'Корсик'} · {fmtDateTime(m.created_at)}</div>
+          <div
+            key={m.id}
+            className={clsx(
+              'max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap',
+              m.author === 'employee'
+                ? 'self-end bg-[#d9f2a6]'
+                : m.author === 'hr'
+                  ? 'bg-sky-100'
+                  : 'bg-white',
+            )}
+          >
+            <div className="mb-0.5 text-[11px] text-ink/45">
+              {m.author === 'employee' ? t.employee : m.author === 'hr' ? 'HR' : 'Корсик'} ·{' '}
+              {fmtDateTime(m.created_at)}
+            </div>
             {m.text}
           </div>
         ))}
@@ -111,10 +160,20 @@ function TicketView({ id }: { id: number }) {
       {t.status === 'open' ? (
         <>
           <div className="mt-3 flex gap-2">
-            <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && reply()} placeholder="Напишите ответ — он придёт новичку в чат с Корсиком" className={clsx(inputCls, 'flex-1')} />
-            <Btn onClick={reply} disabled={!text.trim()}>Ответить</Btn>
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && reply()}
+              placeholder="Напишите ответ — он придёт новичку в чат с Корсиком"
+              className={clsx(inputCls, 'flex-1')}
+            />
+            <Btn onClick={reply} disabled={!text.trim()}>
+              Ответить
+            </Btn>
           </div>
-          <div className="mt-2 text-xs text-ink/40">Можно ответить и из группового чата HR в MAX — реплаем на карточку обращения.</div>
+          <div className="mt-2 text-xs text-ink/40">
+            Можно ответить и из группового чата HR в MAX — реплаем на карточку обращения.
+          </div>
         </>
       ) : (
         <div className="mt-3 text-sm text-ink/50">Обращение решено.</div>

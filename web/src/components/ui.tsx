@@ -8,9 +8,26 @@ export const useDemo = () => useContext(DemoContext).demo
 
 // --- базовые блоки -----------------------------------------------------------------------------------
 
-export function Card({ title, subtitle, action, children, className }: { title?: ReactNode; subtitle?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
+export function Card({
+  title,
+  subtitle,
+  action,
+  children,
+  className,
+}: {
+  title?: ReactNode
+  subtitle?: ReactNode
+  action?: ReactNode
+  children: ReactNode
+  className?: string
+}) {
   return (
-    <section className={clsx('rounded-2xl border border-ink/[0.07] bg-white p-5 shadow-[0_1px_3px_rgba(11,46,58,0.05)]', className)}>
+    <section
+      className={clsx(
+        'rounded-2xl border border-ink/[0.07] bg-white p-5 shadow-[0_1px_3px_rgba(11,46,58,0.05)]',
+        className,
+      )}
+    >
       {(title || action) && (
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
@@ -36,10 +53,27 @@ const tones = {
 export type Tone = keyof typeof tones
 
 export function Badge({ tone = 'gray', children }: { tone?: Tone; children: ReactNode }) {
-  return <span className={clsx('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap', tones[tone])}>{children}</span>
+  return (
+    <span
+      className={clsx(
+        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap',
+        tones[tone],
+      )}
+    >
+      {children}
+    </span>
+  )
 }
 
-export function Btn({ children, onClick, variant = 'primary', disabled, type = 'button', small, demo }: {
+export function Btn({
+  children,
+  onClick,
+  variant = 'primary',
+  disabled,
+  type = 'button',
+  small,
+  demo,
+}: {
   children: ReactNode
   onClick?: () => void
   variant?: 'primary' | 'ghost' | 'danger' | 'lime'
@@ -72,11 +106,29 @@ export function Btn({ children, onClick, variant = 'primary', disabled, type = '
   )
 }
 
-export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: string; tone?: 'red' | 'lime' }) {
+export function Stat({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string
+  value: ReactNode
+  hint?: string
+  tone?: 'red' | 'lime'
+}) {
   return (
     <div className="rounded-2xl border border-ink/[0.07] bg-white p-4">
       <div className="text-[13px] text-ink/55">{label}</div>
-      <div className={clsx('mt-1 text-3xl font-semibold tracking-tight tabular-nums', tone === 'red' && 'text-rose-600', tone === 'lime' && 'text-lime-2')}>{value}</div>
+      <div
+        className={clsx(
+          'mt-1 text-3xl font-semibold tracking-tight tabular-nums',
+          tone === 'red' && 'text-rose-600',
+          tone === 'lime' && 'text-lime-2',
+        )}
+      >
+        {value}
+      </div>
       {hint && <div className="mt-1 text-xs text-ink/45">{hint}</div>}
     </div>
   )
@@ -101,13 +153,32 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   )
 }
 
-export const inputCls = 'rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-ink/40 focus:ring-4 focus:ring-lime/25'
+export const inputCls =
+  'rounded-xl border border-ink/15 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-ink/40 focus:ring-4 focus:ring-lime/25'
 
-export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  wide,
+}: {
+  open: boolean
+  onClose: () => void
+  title: string
+  children: ReactNode
+  wide?: boolean
+}) {
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]" onClick={onClose}>
-      <div className={clsx('w-full rounded-3xl bg-white p-6 shadow-2xl', wide ? 'max-w-2xl' : 'max-w-lg')} onClick={(e) => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-[2px]"
+      onClick={onClose}
+    >
+      <div
+        className={clsx('w-full rounded-3xl bg-white p-6 shadow-2xl', wide ? 'max-w-2xl' : 'max-w-lg')}
+        onClick={(e) => e.stopPropagation()}
+      >
         <h3 className="mb-5 text-lg font-semibold">{title}</h3>
         {children}
       </div>
@@ -115,19 +186,36 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   )
 }
 
-export function Tabs<T extends string>({ value, onChange, items }: { value: T; onChange: (v: T) => void; items: { id: T; label: string; count?: number; hidden?: boolean }[] }) {
+export function Tabs<T extends string>({
+  value,
+  onChange,
+  items,
+}: {
+  value: T
+  onChange: (v: T) => void
+  items: { id: T; label: string; count?: number; hidden?: boolean }[]
+}) {
   return (
     <div className="flex flex-wrap gap-1 rounded-2xl bg-ink/[0.04] p-1">
-      {items.filter((i) => !i.hidden).map((i) => (
-        <button
-          key={i.id}
-          onClick={() => onChange(i.id)}
-          className={clsx('flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm transition', value === i.id ? 'bg-white font-medium shadow-sm' : 'text-ink/60 hover:text-ink')}
-        >
-          {i.label}
-          {!!i.count && <span className="rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">{i.count}</span>}
-        </button>
-      ))}
+      {items
+        .filter((i) => !i.hidden)
+        .map((i) => (
+          <button
+            key={i.id}
+            onClick={() => onChange(i.id)}
+            className={clsx(
+              'flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm transition',
+              value === i.id ? 'bg-white font-medium shadow-sm' : 'text-ink/60 hover:text-ink',
+            )}
+          >
+            {i.label}
+            {!!i.count && (
+              <span className="rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold text-white">
+                {i.count}
+              </span>
+            )}
+          </button>
+        ))}
     </div>
   )
 }
@@ -135,17 +223,32 @@ export function Tabs<T extends string>({ value, onChange, items }: { value: T; o
 export function Progress({ value, tone = 'lime' }: { value: number; tone?: 'lime' | 'red' }) {
   return (
     <div className="h-2 w-full overflow-hidden rounded-full bg-ink/[0.07]">
-      <div className={clsx('h-2 rounded-full transition-all', tone === 'lime' ? 'bg-lime' : 'bg-rose-500')} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      <div
+        className={clsx('h-2 rounded-full transition-all', tone === 'lime' ? 'bg-lime' : 'bg-rose-500')}
+        style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+      />
     </div>
   )
 }
 
 export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
-  const initials = name.split(' ').slice(0, 2).map((p) => p[0]).join('')
+  const initials = name
+    .split(' ')
+    .slice(0, 2)
+    .map((p) => p[0])
+    .join('')
   const hue = [...name].reduce((h, c) => h + c.charCodeAt(0), 0) % 4
-  const colors = ['bg-lime/40 text-ink', 'bg-sky-100 text-sky-900', 'bg-amber-100 text-amber-900', 'bg-emerald-100 text-emerald-900']
+  const colors = [
+    'bg-lime/40 text-ink',
+    'bg-sky-100 text-sky-900',
+    'bg-amber-100 text-amber-900',
+    'bg-emerald-100 text-emerald-900',
+  ]
   return (
-    <div className={clsx('grid shrink-0 place-items-center rounded-full font-semibold', colors[hue])} style={{ width: size, height: size, fontSize: size * 0.36 }}>
+    <div
+      className={clsx('grid shrink-0 place-items-center rounded-full font-semibold', colors[hue])}
+      style={{ width: size, height: size, fontSize: size * 0.36 }}
+    >
       {initials}
     </div>
   )
@@ -153,7 +256,11 @@ export function Avatar({ name, size = 40 }: { name: string; size?: number }) {
 
 // --- словарь интерфейса: внутренние коды → человеческие слова --------------------------------------
 
-export const SITE_NAMES: Record<string, string> = { GrPP: 'Офис Группы', Luzhniki: 'Офис «Лужники»', GTP: 'Завод GTP' }
+export const SITE_NAMES: Record<string, string> = {
+  GrPP: 'Офис Группы',
+  Luzhniki: 'Офис «Лужники»',
+  GTP: 'Завод GTP',
+}
 export const siteName = (code: string) => SITE_NAMES[code] ?? code
 
 export const TICKET_KIND: Record<string, { label: string; tone: Tone }> = {
@@ -185,6 +292,7 @@ export function timeAgo(iso: string) {
 }
 
 export const plural = (n: number, one: string, few: string, many: string) => {
-  const m10 = n % 10, m100 = n % 100
+  const m10 = n % 10,
+    m100 = n % 100
   return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many
 }

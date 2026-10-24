@@ -50,7 +50,11 @@ export default function App() {
 function Panel() {
   const [role, setRole] = useState<Role>(() => saved('korsik_role', 'hr'))
   const [demo, setDemo] = useState<boolean>(() => saved('korsik_demo', true))
-  const { data: open = [] } = useQuery({ queryKey: ['tickets', 'open'], queryFn: () => api.get<Ticket[]>('/api/tickets?status=open'), refetchInterval: 10_000 })
+  const { data: open = [] } = useQuery({
+    queryKey: ['tickets', 'open'],
+    queryFn: () => api.get<Ticket[]>('/api/tickets?status=open'),
+    refetchInterval: 10_000,
+  })
   const persist = (key: string, v: unknown) => localStorage.setItem(key, JSON.stringify(v))
 
   return (
@@ -72,11 +76,22 @@ function Panel() {
                   key={path}
                   to={path}
                   end={path === '/'}
-                  className={({ isActive }) => clsx('flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition', isActive ? 'bg-white/[0.12] font-medium text-white' : 'text-white/65 hover:bg-white/[0.06] hover:text-white')}
+                  className={({ isActive }) =>
+                    clsx(
+                      'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition',
+                      isActive
+                        ? 'bg-white/[0.12] font-medium text-white'
+                        : 'text-white/65 hover:bg-white/[0.06] hover:text-white',
+                    )
+                  }
                 >
                   <Icon size={18} strokeWidth={1.8} />
                   <span className="flex-1">{label}</span>
-                  {path === '/tickets' && open.length > 0 && <span className="rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold">{open.length}</span>}
+                  {path === '/tickets' && open.length > 0 && (
+                    <span className="rounded-full bg-rose-500 px-1.5 text-[11px] font-semibold">
+                      {open.length}
+                    </span>
+                  )}
                 </NavLink>
               )
             })}
@@ -84,7 +99,9 @@ function Panel() {
 
           <div className="mt-auto flex flex-col gap-4">
             <div>
-              <div className="mb-1.5 px-2 text-[11px] font-medium tracking-wide text-white/40 uppercase">Вы вошли как</div>
+              <div className="mb-1.5 px-2 text-[11px] font-medium tracking-wide text-white/40 uppercase">
+                Вы вошли как
+              </div>
               <div className="flex flex-col gap-0.5">
                 {(Object.keys(ROLES) as Role[]).map((r) => (
                   <NavLink
@@ -94,7 +111,12 @@ function Panel() {
                       persist('korsik_role', r)
                       setRole(r)
                     }}
-                    className={clsx('rounded-lg px-3 py-1.5 text-[13px] transition', r === role ? 'bg-white/[0.12] font-medium text-white' : 'text-white/55 hover:text-white')}
+                    className={clsx(
+                      'rounded-lg px-3 py-1.5 text-[13px] transition',
+                      r === role
+                        ? 'bg-white/[0.12] font-medium text-white'
+                        : 'text-white/55 hover:text-white',
+                    )}
                   >
                     {ROLES[r].label}
                   </NavLink>
@@ -123,7 +145,10 @@ function Panel() {
           <Routes>
             <Route path="/" element={role === 'manager' ? <Navigate to="/my" /> : <Dashboard />} />
             <Route path="/employees" element={<Employees />} />
-            <Route path="/employees/:id" element={role === 'manager' ? <ManagerPreview card /> : <EmployeeCard />} />
+            <Route
+              path="/employees/:id"
+              element={role === 'manager' ? <ManagerPreview card /> : <EmployeeCard />}
+            />
             <Route path="/my" element={<ManagerPreview />} />
             <Route path="/my/:id" element={<ManagerPreview card />} />
             <Route path="/tickets" element={<Tickets />} />

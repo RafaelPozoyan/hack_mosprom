@@ -51,16 +51,27 @@ async def message(emp_id: int, body: TextIn):
 
 @router.post("/callback")
 async def callback(emp_id: int, body: CallbackIn):
-    _bg(emp_id, InEvent("callback", payload=body.payload, text=body.text,
-                        message_mid=f"web:{body.message_id}" if body.message_id else None))
+    _bg(
+        emp_id,
+        InEvent(
+            "callback",
+            payload=body.payload,
+            text=body.text,
+            message_mid=f"web:{body.message_id}" if body.message_id else None,
+        ),
+    )
     return {"ok": True}
 
 
 @router.get("/messages")
 async def messages(emp_id: int, s: AsyncSession = Depends(get_session)):
-    rows = (await s.scalars(
-        select(Message).where(Message.employee_id == emp_id, Message.author.in_(["employee", "bot", "hr"])).order_by(Message.id)
-    )).all()
+    rows = (
+        await s.scalars(
+            select(Message)
+            .where(Message.employee_id == emp_id, Message.author.in_(["employee", "bot", "hr"]))
+            .order_by(Message.id)
+        )
+    ).all()
     return [message_view(m) for m in rows]
 
 
@@ -68,11 +79,15 @@ async def messages(emp_id: int, s: AsyncSession = Depends(get_session)):
 async def run_next(emp_id: int, s: AsyncSession = Depends(get_session)):
     """Перемотка: выполнить ближайший запланированный шаг таймлайна прямо сейчас."""
     j = await s.scalar(
-        select(Job).where(
+        select(Job)
+        .where(
             Job.employee_id == emp_id,
             Job.status.in_(["pending", "running"]),
             Job.kind.in_(["step", "reminder", *followup.KINDS]),
-        ).order_by(Job.run_at, Job.id).limit(1).with_for_update()
+        )
+        .order_by(Job.run_at, Job.id)
+        .limit(1)
+        .with_for_update()
     )
     if not j:
         return {"ok": False, "step": None}

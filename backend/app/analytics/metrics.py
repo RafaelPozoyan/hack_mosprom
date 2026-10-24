@@ -27,12 +27,29 @@ def stage(emp: Employee, today: date | None = None) -> str:
 async def risk_signals(s: AsyncSession, since: datetime) -> dict[int, list[dict]]:
     """Сигналы риска по сотрудникам: явные тревожные ответы опросов + выводы NLP-анализа."""
     out: dict[int, list[dict]] = defaultdict(list)
-    for a in (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.flagged, SurveyAnswer.created_at >= since))).all():
-        out[a.employee_id].append({"flag": a.value.get("flag"), "source": "опрос", "text": a.comment or a.value.get("label", ""), "at": a.created_at.isoformat()})
+    for a in (
+        await s.scalars(select(SurveyAnswer).where(SurveyAnswer.flagged, SurveyAnswer.created_at >= since))
+    ).all():
+        out[a.employee_id].append(
+            {
+                "flag": a.value.get("flag"),
+                "source": "опрос",
+                "text": a.comment or a.value.get("label", ""),
+                "at": a.created_at.isoformat(),
+            }
+        )
     rows = await s.scalars(select(Analysis).where(Analysis.created_at >= since, Analysis.severity != "low"))
     for a in rows.all():
         for f in a.risk_flags or [f"негатив: {', '.join(a.topics)}"]:
-            out[a.employee_id].append({"flag": f, "source": "NLP", "text": a.text[:300], "severity": a.severity, "at": a.created_at.isoformat()})
+            out[a.employee_id].append(
+                {
+                    "flag": f,
+                    "source": "NLP",
+                    "text": a.text[:300],
+                    "severity": a.severity,
+                    "at": a.created_at.isoformat(),
+                }
+            )
     return out
 
 
@@ -45,9 +62,13 @@ async def dashboard(s: AsyncSession) -> dict:
     answered = sum(q.answered for q in questions)
     fb = [q.feedback for q in questions if q.feedback]
     open_tickets = await s.scalar(select(func.count()).select_from(Ticket).where(Ticket.status == "open"))
-    red = await s.scalar(select(func.count()).select_from(Ticket).where(Ticket.status == "open", Ticket.severity == "high"))
+    red = await s.scalar(
+        select(func.count()).select_from(Ticket).where(Ticket.status == "open", Ticket.severity == "high")
+    )
 
-    analyses = (await s.scalars(select(Analysis).where(Analysis.created_at >= now - timedelta(weeks=8)))).all()
+    analyses = (
+        await s.scalars(select(Analysis).where(Analysis.created_at >= now - timedelta(weeks=8)))
+    ).all()
     weekly: dict[str, Counter] = defaultdict(Counter)
     for a in analyses:
         wk = (a.created_at.date() - timedelta(days=a.created_at.weekday())).isoformat()
@@ -77,11 +98,20 @@ async def dashboard(s: AsyncSession) -> dict:
     for a in (await s.scalars(select(SurveyAnswer).where(SurveyAnswer.created_at >= since))).all():
         if "score" in a.value and a.value.get("topic"):
             scores[a.value["topic"]].append(a.value["score"])
-    open_list = (await s.scalars(select(Ticket).where(Ticket.status == "open").order_by(Ticket.id.desc()).limit(6))).all()
+    open_list = (
+        await s.scalars(select(Ticket).where(Ticket.status == "open").order_by(Ticket.id.desc()).limit(6))
+    ).all()
     return {
         "attention": [
-            {"id": t.id, "kind": t.kind, "severity": t.severity, "employee": t.employee.full_name, "employee_id": t.employee_id,
-             "subject": t.subject[:160], "created_at": t.created_at.isoformat()}
+            {
+                "id": t.id,
+                "kind": t.kind,
+                "severity": t.severity,
+                "employee": t.employee.full_name,
+                "employee_id": t.employee_id,
+                "subject": t.subject[:160],
+                "created_at": t.created_at.isoformat(),
+            }
             for t in open_list
         ],
         "kpi": {
@@ -93,9 +123,15 @@ async def dashboard(s: AsyncSession) -> dict:
             "red_flags": red,
         },
         "stages": [{"stage": st, "count": by_stage.get(st, 0)} for st in STAGES],
-        "sentiment_weekly": [{"week": wk, **{k: c.get(k, 0) for k in ("positive", "neutral", "negative")}} for wk, c in sorted(weekly.items())],
+        "sentiment_weekly": [
+            {"week": wk, **{k: c.get(k, 0) for k in ("positive", "neutral", "negative")}}
+            for wk, c in sorted(weekly.items())
+        ],
         "question_topics": [{"topic": t, "count": c} for t, c in topics.most_common(8)],
         "knowledge_gaps": [{"question": t, "count": c} for t, c in gaps.most_common(10)],
         "risk": risk[:20],
-        "scores": sorted(({"topic": k, "avg": round(sum(v) / len(v), 1), "n": len(v)} for k, v in scores.items()), key=lambda x: x["avg"]),
+        "scores": sorted(
+            ({"topic": k, "avg": round(sum(v) / len(v), 1), "n": len(v)} for k, v in scores.items()),
+            key=lambda x: x["avg"],
+        ),
     }

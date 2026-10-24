@@ -33,24 +33,49 @@ async def db(monkeypatch):
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with engine.begin() as c:
-            await c.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[
-                Site.__table__, Staff.__table__, Employee.__table__, Ticket.__table__, Message.__table__, Job.__table__,
-            ]))
+            await c.run_sync(
+                lambda conn: Base.metadata.create_all(
+                    conn,
+                    tables=[
+                        Site.__table__,
+                        Staff.__table__,
+                        Employee.__table__,
+                        Ticket.__table__,
+                        Message.__table__,
+                        Job.__table__,
+                    ],
+                )
+            )
+
         @asynccontextmanager
         async def session():
             async with factory() as s:
                 yield s
+
         monkeypatch.setattr(scheduler, "session", session)
         client = SimpleNamespace(send=AsyncMock(return_value="card-mid"))
         monkeypatch.setattr(channels, "max_client", lambda: client)
         monkeypatch.setattr(channels, "settings", lambda: SimpleNamespace(max_hr_chat_id=99))
-        handoff = AsyncMock(return_value=escalation.Handoff(summary="Демо-проблема с доступом", suggested_action="Проверить доступ"))
+        handoff = AsyncMock(
+            return_value=escalation.Handoff(
+                summary="Демо-проблема с доступом", suggested_action="Проверить доступ"
+            )
+        )
         monkeypatch.setattr(escalation, "_handoff", handoff)
         async with factory() as s:
             s.add(Site(code="GTP", name="Демо", kind="plant"))
             await s.flush()
-            s.add(Employee(id=1, full_name="Демо Иван Петров", first_name="Иван", site_code="GTP",
-                           start_date=date(2026, 10, 26), probation_end=date(2027, 1, 26), invite_code="demo"))
+            s.add(
+                Employee(
+                    id=1,
+                    full_name="Демо Иван Петров",
+                    first_name="Иван",
+                    site_code="GTP",
+                    start_date=date(2026, 10, 26),
+                    probation_end=date(2027, 1, 26),
+                    invite_code="demo",
+                )
+            )
             await s.commit()
         yield SimpleNamespace(session=factory, client=client, handoff=handoff)
     finally:
@@ -126,10 +151,12 @@ async def test_recruiter_retry_keeps_confirmed_group_card(db):
         emp.recruiter_id = staff.id
         await s.commit()
     await create(db)
+
     async def send(msg, **kw):
         if "user_id" in kw:
             raise RuntimeError("recruiter unavailable")
         return "card-mid"
+
     db.client.send.side_effect = send
     assert await scheduler.tick() == 1
     async with db.session() as s:
@@ -163,12 +190,14 @@ async def test_closed_or_deleted_ticket_is_not_published(db, remove):
 @pytest.mark.asyncio
 async def test_closure_during_summary_generation_is_respected(db, monkeypatch):
     tid = await create(db)
+
     async def close_while_summarizing(*args):
         async with db.session() as s:
             t = await s.get(Ticket, tid)
             t.status = "closed"
             await s.commit()
         return escalation.Handoff(summary="Демо", suggested_action="Проверить")
+
     monkeypatch.setattr(escalation, "_handoff", close_while_summarizing)
     assert await scheduler.tick() == 1
     db.client.send.assert_not_awaited()
@@ -189,10 +218,12 @@ async def test_demo_without_max_keeps_summary_in_panel(db, monkeypatch):
 async def test_sending_card_does_not_block_reply_message_insert(db):
     tid = await create(db)
     started, release = asyncio.Event(), asyncio.Event()
+
     async def send(*a, **kw):
         started.set()
         await release.wait()
         return "card-mid"
+
     db.client.send.side_effect = send
     worker = asyncio.create_task(scheduler.tick())
     try:

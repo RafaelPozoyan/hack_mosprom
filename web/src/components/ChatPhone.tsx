@@ -11,8 +11,18 @@ function RichText({ text }: { text: string }) {
     <>
       {parts.map((p, i) => {
         const md = p.match(/^\[([^\]]+)\]\(([^)]+)\)$/)
-        if (md) return <a key={i} href={md[2]} target="_blank" rel="noreferrer" className="text-sky underline">{md[1]}</a>
-        if (/^https?:\/\//.test(p)) return <a key={i} href={p} target="_blank" rel="noreferrer" className="break-all text-sky underline">{p}</a>
+        if (md)
+          return (
+            <a key={i} href={md[2]} target="_blank" rel="noreferrer" className="text-sky underline">
+              {md[1]}
+            </a>
+          )
+        if (/^https?:\/\//.test(p))
+          return (
+            <a key={i} href={p} target="_blank" rel="noreferrer" className="break-all text-sky underline">
+              {p}
+            </a>
+          )
         if (/^\*\*.+\*\*$/.test(p)) return <strong key={i}>{p.slice(2, -2)}</strong>
         return <Fragment key={i}>{p}</Fragment>
       })}
@@ -20,11 +30,21 @@ function RichText({ text }: { text: string }) {
   )
 }
 
-function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, text: string, id: number) => void }) {
+function Bubble({
+  m,
+  onButton,
+}: {
+  m: ChatMessage
+  onButton: (payload: string, text: string, id: number) => void
+}) {
   const mine = m.author === 'employee'
   const p = m.payload ?? {}
   if (mine && p.button) {
-    return <div className="my-1 flex justify-end"><span className="rounded-full bg-ink/8 px-3 py-1 text-xs text-ink/70">нажата кнопка «{m.text}»</span></div>
+    return (
+      <div className="my-1 flex justify-end">
+        <span className="rounded-full bg-ink/8 px-3 py-1 text-xs text-ink/70">нажата кнопка «{m.text}»</span>
+      </div>
+    )
   }
   return (
     <div className={clsx('my-1.5 flex', mine ? 'justify-end' : 'justify-start')}>
@@ -33,20 +53,31 @@ function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, t
           data-author={m.author}
           className={clsx(
             'rounded-2xl px-3 py-2 text-[13.5px] leading-snug whitespace-pre-wrap shadow-sm',
-            mine ? 'rounded-br-md bg-[#d9f2a6] text-ink' : m.author === 'hr' ? 'rounded-bl-md bg-sky-100 text-ink' : 'rounded-bl-md bg-white text-ink',
+            mine
+              ? 'rounded-br-md bg-[#d9f2a6] text-ink'
+              : m.author === 'hr'
+                ? 'rounded-bl-md bg-sky-100 text-ink'
+                : 'rounded-bl-md bg-white text-ink',
           )}
         >
           {m.author === 'hr' && <div className="mb-0.5 text-[11px] font-semibold text-sky-700">Живой HR</div>}
           {p.image && <img src={`/media/${p.image}`} alt="" className="mb-2 w-full rounded-xl" />}
           {m.text && <RichText text={m.text} />}
           {p.file && (
-            <a href={`/media/${p.file}`} target="_blank" rel="noreferrer" className="mt-2 flex items-center gap-2 rounded-xl bg-ink/5 px-2.5 py-2 text-xs font-medium">
+            <a
+              href={`/media/${p.file}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 flex items-center gap-2 rounded-xl bg-ink/5 px-2.5 py-2 text-xs font-medium"
+            >
               <FileText size={16} /> Открыть вложение
             </a>
           )}
           {p.sources && p.sources.length > 0 && (
             <details className="mt-1.5 text-[11.5px] text-ink/60">
-              <summary className="cursor-pointer select-none">Цитаты из документов ({p.sources.length})</summary>
+              <summary className="cursor-pointer select-none">
+                Цитаты из документов ({p.sources.length})
+              </summary>
               {p.sources.map((s, i) => (
                 <div key={i} className="mt-1 border-l-2 border-lime pl-2">
                   <div className="font-medium text-ink/70">{s.heading}</div>
@@ -62,7 +93,13 @@ function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, t
               <div key={r} className="flex gap-1">
                 {row.map((b, c) =>
                   b.url ? (
-                    <a key={c} href={b.url} target="_blank" rel="noreferrer" className="flex-1 rounded-xl bg-white/90 px-2 py-1.5 text-center text-[12.5px] font-medium text-sky-700 shadow-sm">
+                    <a
+                      key={c}
+                      href={b.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="flex-1 rounded-xl bg-white/90 px-2 py-1.5 text-center text-[12.5px] font-medium text-sky-700 shadow-sm"
+                    >
                       {b.text} ↗
                     </a>
                   ) : (
@@ -87,7 +124,15 @@ function Bubble({ m, onButton }: { m: ChatMessage; onButton: (payload: string, t
   )
 }
 
-export default function ChatPhone({ employee, onActivity, footer }: { employee: Employee; onActivity?: () => void; footer?: ReactNode }) {
+export default function ChatPhone({
+  employee,
+  onActivity,
+  footer,
+}: {
+  employee: Employee
+  onActivity?: () => void
+  footer?: ReactNode
+}) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [text, setText] = useState('')
   const [typing, setTyping] = useState(false)
@@ -106,7 +151,8 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
         setMessages((prev) => (prev.some((x) => x.id === ev.message.id) ? prev : [...prev, ev.message]))
         if (ev.message.author !== 'employee') setTyping(false)
       }
-      if (ev.type === 'edit') setMessages((prev) => prev.map((x) => (x.id === ev.message.id ? ev.message : x)))
+      if (ev.type === 'edit')
+        setMessages((prev) => prev.map((x) => (x.id === ev.message.id ? ev.message : x)))
       onActivity?.()
     }
     return () => {
@@ -140,13 +186,19 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
       const r = await api.post<{ ok: boolean; status?: string; run_at?: string }>(`${base}/next`)
       const status: Record<string, string> = {
         await_start: 'Ждём запуска бота по QR',
-        done: 'Шаг выполнен', skipped: 'Шаг пропущен', blocked: 'Ждём обязательный ответ',
-        pending: 'Шаг ждёт повторной отправки', failed: 'Не удалось выполнить шаг', running: 'Шаг ещё обрабатывается',
+        done: 'Шаг выполнен',
+        skipped: 'Шаг пропущен',
+        blocked: 'Ждём обязательный ответ',
+        pending: 'Шаг ждёт повторной отправки',
+        failed: 'Не удалось выполнить шаг',
+        running: 'Шаг ещё обрабатывается',
       }
       const result = status[r.status ?? ''] ?? 'Проверьте состояние шага'
-      setNextInfo(r.ok
-        ? `${result} · по плану ${new Date(r.run_at!).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}`
-        : 'Запланированных шагов больше нет')
+      setNextInfo(
+        r.ok
+          ? `${result} · по плану ${new Date(r.run_at!).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' })}`
+          : 'Запланированных шагов больше нет',
+      )
       onActivity?.()
     } catch {
       setNextInfo('Не удалось подтвердить результат. Проверьте путь адаптации перед повтором.')
@@ -168,7 +220,9 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
         <div ref={scroller} className="flex-1 overflow-y-auto px-3 py-2">
           {messages.length === 0 && (
             <div className="mt-24 text-center text-xs text-ink/50">
-              {employee.status === 'invited' ? 'Сотрудник ещё не запустил бота. Нажмите «Старт по QR».' : 'Сообщений пока нет'}
+              {employee.status === 'invited'
+                ? 'Сотрудник ещё не запустил бота. Нажмите «Старт по QR».'
+                : 'Сообщений пока нет'}
             </div>
           )}
           {messages.map((m) => (
@@ -177,7 +231,11 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
           {typing && (
             <div className="my-1.5 inline-flex gap-1 rounded-2xl rounded-bl-md bg-white px-3 py-2.5 shadow-sm">
               {[0, 1, 2].map((i) => (
-                <span key={i} className="size-1.5 animate-bounce rounded-full bg-ink/40" style={{ animationDelay: `${i * 0.15}s` }} />
+                <span
+                  key={i}
+                  className="size-1.5 animate-bounce rounded-full bg-ink/40"
+                  style={{ animationDelay: `${i * 0.15}s` }}
+                />
               ))}
             </div>
           )}
@@ -202,11 +260,20 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
       </div>
       <div className="flex w-[360px] flex-wrap justify-center gap-2">
         {employee.status === 'invited' && (
-          <button onClick={() => { busy(); api.post(`${base}/start`) }} className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-sky/60 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800">
+          <button
+            onClick={() => {
+              busy()
+              api.post(`${base}/start`)
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-sky/60 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800"
+          >
             <QrCode size={16} /> Новичок сканирует QR
           </button>
         )}
-        <button onClick={next} className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-sky/60 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800">
+        <button
+          onClick={next}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-sky/60 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800"
+        >
           <FastForward size={16} /> Перемотать к следующему шагу
         </button>
       </div>

@@ -9,17 +9,24 @@ from app.channels.max import MaxClient, _keyboard
 
 def test_keyboard_matches_docs():
     rows = _keyboard([[Button("Да", payload="b:x:0:0:0"), Button("Сайт", url="https://example.com")]])
-    assert rows == [[
-        {"type": "callback", "text": "Да", "payload": "b:x:0:0:0"},
-        {"type": "link", "text": "Сайт", "url": "https://example.com"},
-    ]]
+    assert rows == [
+        [
+            {"type": "callback", "text": "Да", "payload": "b:x:0:0:0"},
+            {"type": "link", "text": "Сайт", "url": "https://example.com"},
+        ]
+    ]
 
 
 def test_message_body_has_inline_keyboard_attachment():
     client = MaxClient("token", "https://platform-api2.max.ru")
     body = asyncio.run(client._body(OutMessage(text="Привет", buttons=[[Button("Ок", payload="a:menu")]])))
     assert body["text"] == "Привет" and body["format"] == "markdown"
-    assert body["attachments"] == [{"type": "inline_keyboard", "payload": {"buttons": [[{"type": "callback", "text": "Ок", "payload": "a:menu"}]]}}]
+    assert body["attachments"] == [
+        {
+            "type": "inline_keyboard",
+            "payload": {"buttons": [[{"type": "callback", "text": "Ок", "payload": "a:menu"}]]},
+        }
+    ]
 
 
 def test_auth_header_not_query():
@@ -29,7 +36,18 @@ def test_auth_header_not_query():
 
 
 def test_callback_button_text_is_recovered_from_message():
-    message = {"body": {"mid": "m1", "attachments": [{"type": "inline_keyboard", "payload": {"buttons": [[
-        {"type": "callback", "text": "На ВЫ", "payload": "b:welcome:1:0:1"}]]}}]}}
+    message = {
+        "body": {
+            "mid": "m1",
+            "attachments": [
+                {
+                    "type": "inline_keyboard",
+                    "payload": {
+                        "buttons": [[{"type": "callback", "text": "На ВЫ", "payload": "b:welcome:1:0:1"}]]
+                    },
+                }
+            ],
+        }
+    }
     assert _button_text(message, "b:welcome:1:0:1") == "На ВЫ"
     assert _button_text(message, "unknown") == ""

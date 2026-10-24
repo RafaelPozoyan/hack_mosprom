@@ -45,7 +45,11 @@ def identity(upd: dict) -> tuple[str, str] | None:
             chat_id = _integer(msg["recipient"]["chat_id"])
             if user_id is not None:
                 user_id = _integer(user_id)
-            actor = f"chat:{chat_id}" if user_id is None or chat_id == settings().max_hr_chat_id else f"user:{user_id}"
+            actor = (
+                f"chat:{chat_id}"
+                if user_id is None or chat_id == settings().max_hr_chat_id
+                else f"user:{user_id}"
+            )
             # У пересланного сообщения body может отсутствовать: сохраняем идентичность всего события.
             event_id = (msg.get("body") or {}).get("mid") or upd
         elif kind == "message_callback":
@@ -70,19 +74,32 @@ async def enqueue(upd: dict) -> None:
     async with session() as s:
         # Порядок приёма одного пользователя не зависит от времени commit параллельных запросов.
         await s.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(actor, 0))))
-        await s.execute(insert(MaxUpdate).values(event_key=key, actor=actor, payload=upd)
-                        .on_conflict_do_nothing(index_elements=[MaxUpdate.event_key]))
+        await s.execute(
+            insert(MaxUpdate)
+            .values(event_key=key, actor=actor, payload=upd)
+            .on_conflict_do_nothing(index_elements=[MaxUpdate.event_key])
+        )
         await s.commit()  # только после этого webhook может подтвердить получение
 
 
 async def process_one() -> bool:
     earlier = aliased(MaxUpdate)
     async with session() as s, s.begin():
-        row = await s.scalar(select(MaxUpdate).where(
-            MaxUpdate.status == "pending", MaxUpdate.available_at <= func.now(),
-            ~exists(select(earlier.id).where(earlier.actor == MaxUpdate.actor, earlier.id < MaxUpdate.id,
-                                            earlier.status != "done")),
-        ).order_by(MaxUpdate.id).limit(1).with_for_update(skip_locked=True))
+        row = await s.scalar(
+            select(MaxUpdate)
+            .where(
+                MaxUpdate.status == "pending",
+                MaxUpdate.available_at <= func.now(),
+                ~exists(
+                    select(earlier.id).where(
+                        earlier.actor == MaxUpdate.actor, earlier.id < MaxUpdate.id, earlier.status != "done"
+                    )
+                ),
+            )
+            .order_by(MaxUpdate.id)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
         if row is None:
             return False
         # Блокировка живёт до конца обработки. При падении процесса транзакция откатится,
@@ -91,7 +108,9 @@ async def process_one() -> bool:
         try:
             await process_max_update(row.payload, raise_errors=True)
         except Exception as e:
-            row.error = type(e).__name__  # не сохраняем сообщения сотрудников или ответы внешнего API в ошибке
+            row.error = type(
+                e
+            ).__name__  # не сохраняем сообщения сотрудников или ответы внешнего API в ошибке
             row.status = "failed" if row.attempts >= MAX_ATTEMPTS else "pending"
             row.available_at = utcnow() + timedelta(minutes=row.attempts)  # та же пауза, что у jobs
             log.warning("MAX inbox id=%s status=%s error=%s", row.id, row.status, row.error)

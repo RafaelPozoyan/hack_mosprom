@@ -128,4 +128,14 @@ async def post_hr_chat(msg: OutMessage, *, raise_errors: bool = False) -> str | 
         return None
 
 
-__all__ = ["Button", "InEvent", "OutMessage", "edit", "hub", "log_incoming", "notify_staff", "post_hr_chat", "send"]
+__all__ = [
+    "Button",
+    "InEvent",
+    "OutMessage",
+    "edit",
+    "hub",
+    "log_incoming",
+    "notify_staff",
+    "post_hr_chat",
+    "send",
+]

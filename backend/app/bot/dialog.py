@@ -28,9 +28,37 @@ from app.rag.answer import answer as rag_answer
 log = logging.getLogger(__name__)
 
 SMALLTALK = {
-    "привет", "приветик", "здравствуй", "здравствуйте", "добрый", "доброе", "день", "утро", "вечер", "хай", "hello",
-    "hi", "спасибо", "спс", "благодарю", "пока", "ок", "окей", "ok", "хорошо", "понятно", "ясно", "отлично", "супер",
-    "корсик", "да", "нет", "ага", "угу", "класс", "круто",
+    "привет",
+    "приветик",
+    "здравствуй",
+    "здравствуйте",
+    "добрый",
+    "доброе",
+    "день",
+    "утро",
+    "вечер",
+    "хай",
+    "hello",
+    "hi",
+    "спасибо",
+    "спс",
+    "благодарю",
+    "пока",
+    "ок",
+    "окей",
+    "ok",
+    "хорошо",
+    "понятно",
+    "ясно",
+    "отлично",
+    "супер",
+    "корсик",
+    "да",
+    "нет",
+    "ага",
+    "угу",
+    "класс",
+    "круто",
 }
 
 
@@ -55,7 +83,9 @@ async def on_start(s: AsyncSession, emp: Employee) -> None:
         await s.commit()
         await schedule_employee(s, emp)
         await run_step(s, emp, "welcome")
-    elif not await s.scalar(select(Message.id).where(Message.employee_id == emp.id, Message.step_id == "welcome").limit(1)):
+    elif not await s.scalar(
+        select(Message.id).where(Message.employee_id == emp.id, Message.step_id == "welcome").limit(1)
+    ):
         # приветствие не ушло (сбой отправки в MAX): повторный старт начинает путь, а не показывает меню
         await run_step(s, emp, "welcome")
     else:
@@ -79,8 +109,20 @@ async def on_text(s: AsyncSession, emp: Employee, text: str) -> None:
         await s.commit()
         from app.bot.scenario import notify_audience
 
-        await notify_audience(s, emp, "recruiter", f"Самопрезентация сотрудника для знакомства с коллегами:\n\n{text}", "d2_self_intro")
-        await channels.send(s, emp, OutMessage(text=render("Спасибо! Передал рекрутеру — скоро {тебя|вас} представят коллегам 🙌", emp)))
+        await notify_audience(
+            s,
+            emp,
+            "recruiter",
+            f"Самопрезентация сотрудника для знакомства с коллегами:\n\n{text}",
+            "d2_self_intro",
+        )
+        await channels.send(
+            s,
+            emp,
+            OutMessage(
+                text=render("Спасибо! Передал рекрутеру — скоро {тебя|вас} представят коллегам 🙌", emp)
+            ),
+        )
     elif emp.state.get("ticket_id"):
         await escalation.forward_from_employee(s, emp, text)
     elif is_smalltalk(text):
@@ -93,8 +135,13 @@ async def answer_question(s: AsyncSession, emp: Employee, text: str, log_questio
     form = "вы" if emp.address_form == "vy" else "ты"
     res = await rag_answer(s, text, emp.site_code, form)
     q = Question(
-        employee_id=emp.id, text=text, answered=res.answered, reason=res.reason, best_score=res.best_score,
-        answer=res.text, sources=res.sources,
+        employee_id=emp.id,
+        text=text,
+        answered=res.answered,
+        reason=res.reason,
+        best_score=res.best_score,
+        answer=res.text,
+        sources=res.sources,
     )
     s.add(q)
     await s.commit()
@@ -120,7 +167,11 @@ async def answer_question(s: AsyncSession, emp: Employee, text: str, log_questio
         await channels.send(
             s,
             emp,
-            OutMessage(text=render(fb["text"], emp), image=fb.get("image"), buttons=surveys.offer_buttons(emp, ["relay", "recruiter"])),
+            OutMessage(
+                text=render(fb["text"], emp),
+                image=fb.get("image"),
+                buttons=surveys.offer_buttons(emp, ["relay", "recruiter"]),
+            ),
         )
     if log_question:
         analyze_later(emp.id, text, "chat", question_id=q.id)
@@ -171,10 +222,17 @@ async def on_callback(s: AsyncSession, emp: Employee, ev: InEvent) -> None:
             q.feedback = int(val)
             await s.commit()
         if int(val) < 0:
-            await channels.send(s, emp, OutMessage(
-                text=render("Спасибо, что {отметил|отметили}! {Хочешь|Хотите}, передам вопрос HR — они ответят точнее?", emp),
-                buttons=[[Button("📨 Да, передай", payload=f"a:relay_q:{qid}")]],
-            ))
+            await channels.send(
+                s,
+                emp,
+                OutMessage(
+                    text=render(
+                        "Спасибо, что {отметил|отметили}! {Хочешь|Хотите}, передам вопрос HR — они ответят точнее?",
+                        emp,
+                    ),
+                    buttons=[[Button("📨 Да, передай", payload=f"a:relay_q:{qid}")]],
+                ),
+            )
     elif kind == "a":
         await action(s, emp, rest)
 
@@ -192,13 +250,15 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
         value = {"label": btn["text"]}
         if btn.get("flag"):
             value["flag"] = btn["flag"]
-        s.add(SurveyAnswer(
-            employee_id=emp.id,
-            survey_id=f"step:{step_id}",
-            question_id=step_id,
-            value=value,
-            flagged=bool(btn.get("flag")),
-        ))
+        s.add(
+            SurveyAnswer(
+                employee_id=emp.id,
+                survey_id=f"step:{step_id}",
+                question_id=step_id,
+                value=value,
+                flagged=bool(btn.get("flag")),
+            )
+        )
         await progress.complete(s, emp, step_id)
         await s.commit()
     if step_id != "menu" and any(btn.get(k) for k in ("set_form", "flag", "goto", "action")):
@@ -213,8 +273,15 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
         await s.commit()
     if btn.get("flag"):
         if not required:
-            s.add(SurveyAnswer(employee_id=emp.id, survey_id=f"step:{step_id}", question_id=step_id,
-                               value={"label": btn["text"], "flag": btn["flag"]}, flagged=True))
+            s.add(
+                SurveyAnswer(
+                    employee_id=emp.id,
+                    survey_id=f"step:{step_id}",
+                    question_id=step_id,
+                    value={"label": btn["text"], "flag": btn["flag"]},
+                    flagged=True,
+                )
+            )
             await s.commit()
         from app.analytics.sentiment import react
 
@@ -233,13 +300,19 @@ async def action(s: AsyncSession, emp: Employee, act: str) -> None:
         await escalation.ask_relay(s, emp)
     elif name == "relay_q":
         q = await s.get(Question, int(arg))
-        await escalation.open_dialog(s, emp, f"Вопрос сотрудника: {q.text}" if q else "Вопрос сотрудника", kind="question")
+        await escalation.open_dialog(
+            s, emp, f"Вопрос сотрудника: {q.text}" if q else "Вопрос сотрудника", kind="question"
+        )
     elif name == "recruiter":
         await escalation.open_dialog(s, emp, "Сотрудник просит связаться с рекрутером", kind="problem")
     elif name == "recruiter_voice":
         problem = emp.state.get("last_problem") or ""
-        await escalation.create_ticket(s, emp, "problem", f"Готов(а) озвучить причину сомнений лично рекрутеру. {problem}".strip())
-        await channels.send(s, emp, OutMessage(text=render("Передал рекрутеру — он свяжется с {тобой|вами} лично 🙌", emp)))
+        await escalation.create_ticket(
+            s, emp, "problem", f"Готов(а) озвучить причину сомнений лично рекрутеру. {problem}".strip()
+        )
+        await channels.send(
+            s, emp, OutMessage(text=render("Передал рекрутеру — он свяжется с {тобой|вами} лично 🙌", emp))
+        )
     elif name == "close_dialog":
         tid = emp.state.get("ticket_id")
         if tid:
@@ -268,7 +341,10 @@ async def send_progress(s: AsyncSession, emp: Employee) -> None:
     day = (date.today() - emp.start_date).days + 1
     jobs = (
         await s.scalars(
-            select(Job).where(Job.employee_id == emp.id, Job.kind == "step", Job.status == "pending").order_by(Job.run_at).limit(3)
+            select(Job)
+            .where(Job.employee_id == emp.id, Job.kind == "step", Job.status == "pending")
+            .order_by(Job.run_at)
+            .limit(3)
         )
     ).all()
     titles = {st["id"]: st for st in scenario()["steps"]}
@@ -283,10 +359,10 @@ async def send_progress(s: AsyncSession, emp: Employee) -> None:
     if upcoming:
         lines.append("\nВпереди:")
         for j in upcoming:
-            lines.append(f"• {j.run_at.astimezone(site_tz(emp.site_code)).strftime('%d.%m')} — {titles.get(j.ref, {}).get('title', 'сообщение от Корсика')}")
+            lines.append(
+                f"• {j.run_at.astimezone(site_tz(emp.site_code)).strftime('%d.%m')} — {titles.get(j.ref, {}).get('title', 'сообщение от Корсика')}"
+            )
     await channels.send(s, emp, OutMessage(text="\n".join(lines)))
-
-
 
 
 async def find_message(s: AsyncSession, emp: Employee, mid: str | None) -> Message | None:

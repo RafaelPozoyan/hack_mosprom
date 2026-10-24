@@ -40,7 +40,15 @@ export type Employee = {
 export type Signal = { flag: string; source: string; text: string; severity?: string; at: string }
 
 export type Dashboard = {
-  attention: { id: number; kind: string; severity: string; employee: string; employee_id: number; subject: string; created_at: string }[]
+  attention: {
+    id: number
+    kind: string
+    severity: string
+    employee: string
+    employee_id: number
+    subject: string
+    created_at: string
+  }[]
   kpi: {
     newcomers: number
     questions: number
@@ -73,8 +81,24 @@ export type Ticket = {
 
 export type Meta = {
   sites: { code: string; name: string; kind: string; tz: string }[]
-  staff: { id: number; name: string; role: string; max_connected: boolean; invite_link: string | null; code: string | null }[]
-  steps: { id: string; title: string; phase: string; at: Record<string, string | number | boolean> | null; sites: string[]; manual: boolean; audience: string; preview: string }[]
+  staff: {
+    id: number
+    name: string
+    role: string
+    max_connected: boolean
+    invite_link: string | null
+    code: string | null
+  }[]
+  steps: {
+    id: string
+    title: string
+    phase: string
+    at: Record<string, string | number | boolean> | null
+    sites: string[]
+    manual: boolean
+    audience: string
+    preview: string
+  }[]
   surveys: Record<string, { title: string; questions: number }>
   max_connected: boolean
   max_bot_name: string
@@ -124,14 +148,46 @@ export const api = {
 export const withToken = (path: string) => (token() ? `${path}?token=${token()}` : path)
 
 // Время для людей — всегда по Москве, а не по часам браузера (у HR в другом поясе или в контейнере записи демо — иначе)
-export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow' })
-export const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' })
+export const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow' })
+export const fmtTime = (iso: string) =>
+  new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' })
 export const fmtDateTime = (iso: string) =>
-  new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' })
+  new Date(iso).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Moscow',
+  })
 
-export type TimelineStep = { step_id: string; title: string; phase: string; run_at: string | null; manual: boolean; audience: string; status: string; status_note: string | null; preview: string }
-export type SurveyGroup = { title: string; at: string; items: { question: string; answer: string; comment: string | null; concern: boolean; flag: string | null }[] }
-export type AnalysisItem = { text: string; sentiment: string; emotions: string[]; topics: string[]; risk_flags: string[]; severity: string; summary: string; source: string; at: string }
+export type TimelineStep = {
+  step_id: string
+  title: string
+  phase: string
+  run_at: string | null
+  manual: boolean
+  audience: string
+  status: string
+  status_note: string | null
+  preview: string
+}
+export type SurveyGroup = {
+  title: string
+  at: string
+  items: { question: string; answer: string; comment: string | null; concern: boolean; flag: string | null }[]
+}
+export type AnalysisItem = {
+  text: string
+  sentiment: string
+  emotions: string[]
+  topics: string[]
+  risk_flags: string[]
+  severity: string
+  summary: string
+  source: string
+  at: string
+}
 export type Notification = { to?: string; text: string; delivered: boolean; at: string }
 export type EmployeeCardData = {
   employee: Employee
@@ -142,15 +198,40 @@ export type EmployeeCardData = {
   notifications: Notification[]
 }
 /** Сотрудник глазами руководителя: сервер отдаёт только эти поля (MANAGER_FIELDS в admin.py). */
-export type ManagerEmployee = Pick<Employee, 'id' | 'full_name' | 'first_name' | 'position' | 'site_code' | 'start_date' | 'probation_end' | 'status' | 'stage'>
+export type ManagerEmployee = Pick<
+  Employee,
+  | 'id'
+  | 'full_name'
+  | 'first_name'
+  | 'position'
+  | 'site_code'
+  | 'start_date'
+  | 'probation_end'
+  | 'status'
+  | 'stage'
+>
 export type ManagerHome = { manager: string; employees: ManagerEmployee[] }
-export type ManagerCardData = { employee: ManagerEmployee; signals: string[]; upcoming: { title: string; run_at: string }[]; notifications: Notification[] }
+export type ManagerCardData = {
+  employee: ManagerEmployee
+  signals: string[]
+  upcoming: { title: string; run_at: string }[]
+  notifications: Notification[]
+}
 
 /** День испытательного срока: отрицательный — дней до выхода. */
 export function probationDay(e: Pick<Employee, 'start_date' | 'probation_end'>) {
   const day = Math.floor((Date.now() - new Date(e.start_date).getTime()) / 86400000) + 1
-  const total = Math.round((new Date(e.probation_end).getTime() - new Date(e.start_date).getTime()) / 86400000) + 1
+  const total =
+    Math.round((new Date(e.probation_end).getTime() - new Date(e.start_date).getTime()) / 86400000) + 1
   return { day, total }
 }
 
-export const PHASES = ['Знакомство', 'До выхода', 'Первый день', 'Первые дни', 'Первый месяц', 'Второй месяц', 'Третий месяц и итоги']
+export const PHASES = [
+  'Знакомство',
+  'До выхода',
+  'Первый день',
+  'Первые дни',
+  'Первый месяц',
+  'Второй месяц',
+  'Третий месяц и итоги',
+]

@@ -168,5 +168,7 @@ async def answer(s: AsyncSession, question: str, site: str = "", form: str = "т
     if reason != "ok":
         log.info("ответ отклонён проверкой (%s): %s", reason, ans.model_dump_json()[:500])
         return Result(False, "", reason, best, hits)
-    sources = [{"title": h.title, "heading": h.heading, "quote": quote, "chunk_id": h.chunk_id} for h, quote in cited]
+    sources = [
+        {"title": h.title, "heading": h.heading, "quote": quote, "chunk_id": h.chunk_id} for h, quote in cited
+    ]
     return Result(True, ans.answer.strip(), "ok", best, hits, sources)

@@ -41,7 +41,9 @@ class Staff(Base):
     max_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     max_link: Mapped[str | None] = mapped_column(String(500))  # ссылка «перейти в диалог» для кнопки
     site_code: Mapped[str | None] = mapped_column(ForeignKey("sites.code"))
-    invite_code: Mapped[str] = mapped_column(String(64), unique=True)  # диплинк staff_<code> → подписка на push
+    invite_code: Mapped[str] = mapped_column(
+        String(64), unique=True
+    )  # диплинк staff_<code> → подписка на push
 
 
 class Employee(Base):
@@ -58,7 +60,9 @@ class Employee(Base):
     recruiter_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     address_form: Mapped[str | None] = mapped_column(String(2))  # ty | vy — выбирает сам сотрудник
     channel: Mapped[str] = mapped_column(String(10), default="web")  # web (демо) | max
-    max_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)  # один аккаунт MAX — один сотрудник
+    max_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, unique=True
+    )  # один аккаунт MAX — один сотрудник
     invite_code: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="invited")  # invited | active | finished
     state: Mapped[dict] = mapped_column(JSONB, default=dict)  # текущий опрос/ожидание ввода
@@ -80,7 +84,9 @@ class Job(Base):
     kind: Mapped[str] = mapped_column(String(20), default="step")
     ref: Mapped[str] = mapped_column(String(100))  # id шага / опроса
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | running | blocked | done | cancelled | failed
+    status: Mapped[str] = mapped_column(
+        String(12), default="pending"
+    )  # pending | running | blocked | done | cancelled | failed
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -117,7 +123,9 @@ class SurveyAnswer(Base):
     employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"), index=True)
     survey_id: Mapped[str] = mapped_column(String(50))
     question_id: Mapped[str] = mapped_column(String(50))
-    value: Mapped[dict] = mapped_column(JSONB)  # {"option": "b"} | {"score": 7} | {"options": [...]} | {"text": ...}
+    value: Mapped[dict] = mapped_column(
+        JSONB
+    )  # {"option": "b"} | {"score": 7} | {"options": [...]} | {"text": ...}
     comment: Mapped[str | None] = mapped_column(Text)
     flagged: Mapped[bool] = mapped_column(default=False)  # ответ из «тревожных» вариантов ТЗ
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -204,7 +212,9 @@ class Question(Base):
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
     text: Mapped[str] = mapped_column(Text)
     answered: Mapped[bool] = mapped_column(default=False)
-    reason: Mapped[str] = mapped_column(String(30), default="")  # ok | low_score | not_in_context | bad_citation
+    reason: Mapped[str] = mapped_column(
+        String(30), default=""
+    )  # ok | low_score | not_in_context | bad_citation
     best_score: Mapped[float | None] = mapped_column(Float)
     topic: Mapped[str | None] = mapped_column(String(100))
     answer: Mapped[str] = mapped_column(Text, default="")

@@ -19,7 +19,9 @@ def client() -> AsyncOpenAI:
     if _client is None:
         cfg = settings()
         # без автоповторов: повтор долгого запроса к LLM на CPU только утраивает ожидание пользователя
-        _client = AsyncOpenAI(base_url=cfg.llm_base_url, api_key=cfg.llm_api_key, timeout=cfg.llm_timeout_s, max_retries=0)
+        _client = AsyncOpenAI(
+            base_url=cfg.llm_base_url, api_key=cfg.llm_api_key, timeout=cfg.llm_timeout_s, max_retries=0
+        )
     return _client
 
 

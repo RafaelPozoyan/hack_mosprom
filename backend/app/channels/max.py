@@ -89,7 +89,9 @@ class MaxClient:
             return self._media_tokens[key]
         slot = await self._call("POST", "/uploads", params={"type": kind})
         async with httpx.AsyncClient(timeout=120, verify=self.verify) as up:
-            r = await up.post(slot["url"], headers={"Authorization": self.token}, files={"data": (path.name, data)})
+            r = await up.post(
+                slot["url"], headers={"Authorization": self.token}, files={"data": (path.name, data)}
+            )
         if r.status_code >= 400:
             raise MaxApiError(r.status_code, r.text)
         body = r.json()
@@ -104,9 +106,13 @@ class MaxClient:
         attachments: list[dict] = []
         media = settings().media_dir
         if msg.image:
-            attachments.append({"type": "image", "payload": {"token": await self.upload(media / msg.image, "image")}})
+            attachments.append(
+                {"type": "image", "payload": {"token": await self.upload(media / msg.image, "image")}}
+            )
         if msg.file:
-            attachments.append({"type": "file", "payload": {"token": await self.upload(media / msg.file, "file")}})
+            attachments.append(
+                {"type": "file", "payload": {"token": await self.upload(media / msg.file, "file")}}
+            )
         if msg.buttons:
             attachments.append({"type": "inline_keyboard", "payload": {"buttons": _keyboard(msg.buttons)}})
         return {"text": msg.text, "attachments": attachments, "format": "markdown"}

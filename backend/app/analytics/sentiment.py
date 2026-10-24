@@ -47,9 +47,13 @@ SYSTEM = """Ты — аналитик HR-службы. Анализируешь 
 
 async def analyze_text(text: str, context: str = "") -> TextAnalysis:
     tx = taxonomy()
-    system = SYSTEM.format(emotions=", ".join(tx["emotions"]), topics=", ".join(tx["topics"]), risks=", ".join(tx["risk_flags"]))
+    system = SYSTEM.format(
+        emotions=", ".join(tx["emotions"]), topics=", ".join(tx["topics"]), risks=", ".join(tx["risk_flags"])
+    )
     user = f"Контекст: {context}\n\nТекст сотрудника: «{text}»" if context else f"Текст сотрудника: «{text}»"
-    res = await llm.structured([{"role": "system", "content": system}, {"role": "user", "content": user}], TextAnalysis)
+    res = await llm.structured(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}], TextAnalysis
+    )
     # модель могла вернуть значение вне таксономии — отбрасываем, чтобы аналитика оставалась сопоставимой
     res.emotions = [e for e in res.emotions if e in tx["emotions"]]
     res.topics = [t for t in res.topics if t in tx["topics"]] or ["другое"]
@@ -61,13 +65,21 @@ async def last_bot_text(s: AsyncSession, emp: Employee) -> str:
     from sqlalchemy import select
 
     m = await s.scalar(
-        select(Message).where(Message.employee_id == emp.id, Message.author == "bot").order_by(Message.id.desc()).limit(1)
+        select(Message)
+        .where(Message.employee_id == emp.id, Message.author == "bot")
+        .order_by(Message.id.desc())
+        .limit(1)
     )
     return m.text[:500] if m else ""
 
 
 async def save_and_react(
-    s: AsyncSession, emp: Employee, res: TextAnalysis | None, text: str, source: str, extra_flags: list[str] | None = None
+    s: AsyncSession,
+    emp: Employee,
+    res: TextAnalysis | None,
+    text: str,
+    source: str,
+    extra_flags: list[str] | None = None,
 ) -> Analysis | None:
     """res — разбор LLM (None, если он не удался); extra_flags — явный сигнал из выбранного варианта ответа
     (например, «Нет, задумываюсь об уходе»): он срабатывает и без LLM."""
@@ -122,7 +134,10 @@ async def react(
                         "Похоже, ситуация непростая 💙 {Ты не один|Вы не одни}: я могу конфиденциально передать это коллегам из HR — они помогут.",
                         emp,
                     ),
-                    buttons=[[Button("📨 Да, передай HR", payload="a:relay")], [Button("Не сейчас", payload="a:noop")]],
+                    buttons=[
+                        [Button("📨 Да, передай HR", payload="a:relay")],
+                        [Button("Не сейчас", payload="a:noop")],
+                    ],
                 ),
             )
     manager_flags = manager_topics([flags], tx)
@@ -136,7 +151,9 @@ async def react(
         )
 
 
-def analyze_later(emp_id: int, text: str, source: str, extra_flags: list[str] | None = None, question_id: int | None = None) -> None:
+def analyze_later(
+    emp_id: int, text: str, source: str, extra_flags: list[str] | None = None, question_id: int | None = None
+) -> None:
     """Анализ в фоне: сотрудник не ждёт LLM, следующий вопрос опроса или ответ приходит сразу.
     Сам разбор LLM идёт без замка сотрудника: на CPU это десятки секунд, и кнопки сотрудника всё это время ждали бы.
     Запись и реакция — под замком, чтобы не гоняться с обработкой его сообщений за состояние диалога."""

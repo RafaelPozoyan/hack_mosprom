@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 @theme {
   --color-ink: #0b2e3a;
@@ -7,7 +7,7 @@
   --color-lime-2: #8fb52b;
   --color-sky: #3ca0be;
   --color-paper: #f4f7f6;
-  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-sans: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
 
 body {
