@@ -8,6 +8,15 @@ export const useDemo = () => useContext(DemoContext).demo
 
 // --- базовые блоки -----------------------------------------------------------------------------------
 
+/** Знак Корсика — лиса-корсак на салатовой плашке; вместо эмодзи, которого нет без шрифта эмодзи. */
+export function KorsikMark({ className = 'size-10 rounded-2xl' }: { className?: string }) {
+  return (
+    <div className={clsx('grid shrink-0 place-items-center bg-lime', className)}>
+      <img src="/korsik-mark.svg" alt="" className="size-[64%]" />
+    </div>
+  )
+}
+
 export function Card({
   title,
   subtitle,
