@@ -11,7 +11,7 @@ from app.channels.base import Button, OutMessage
 from app.channels.max import max_client
 from app.db import session
 from app.models import MaxDelivery, Message
-from app.scheduler import MAX_ATTEMPTS, utcnow
+from app.scheduler import MAX_ATTEMPTS
 
 log = logging.getLogger(__name__)
 WORKERS = 2  # один медленный чат не останавливает всех; оставляем соединения API и другим очередям
@@ -47,7 +47,8 @@ async def process_one() -> bool:
         # После получения замка перечитываем доставку: предыдущий владелец мог
         # завершить отправку или правку между выборкой кандидата и блокировкой.
         await s.refresh(row)
-        if row.status not in ("pending", "running") or row.available_at > await s.scalar(select(func.now())):
+        now = await s.scalar(select(func.now()))
+        if row.status not in ("pending", "running") or row.available_at > now:
             return False
         # Замок журнала общий с edit и каскадным удалением сотрудника.
         m = await s.get(Message, row.message_id)
@@ -63,7 +64,7 @@ async def process_one() -> bool:
                 .values(
                     status="running",
                     attempts=row.attempts + 1,
-                    available_at=utcnow() + timedelta(minutes=row.attempts + 1),
+                    available_at=func.clock_timestamp() + timedelta(minutes=row.attempts + 1),
                 )
             )
         await s.refresh(row)
@@ -86,7 +87,8 @@ async def process_one() -> bool:
         except Exception as e:
             row.error = type(e).__name__  # без текстов сотрудников и ответов внешнего API
             row.status = "failed" if row.attempts >= MAX_ATTEMPTS else "pending"
-            row.available_at = utcnow() + timedelta(minutes=row.attempts)  # бюджет и паузы как у jobs
+            # Срок повтора тоже считаем на часах БД, после завершения внешнего вызова.
+            row.available_at = func.clock_timestamp() + timedelta(minutes=row.attempts)
             log.warning("MAX outbox message=%s status=%s error=%s", row.message_id, row.status, row.error)
         else:
             row.status, row.error = "done", None

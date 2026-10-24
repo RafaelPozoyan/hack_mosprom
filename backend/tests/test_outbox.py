@@ -129,10 +129,14 @@ async def test_uncertain_send_retries_then_fails_without_overtaking(db, result):
         assert not await outbox.process_one()
         async with db.session() as s:
             row = await s.get(MaxDelivery, first)
-            assert row.attempts == attempt and row.error and row.available_at > outbox.utcnow()
+            assert (
+                row.attempts == attempt
+                and row.error
+                and row.available_at > await s.scalar(select(func.now()))
+            )
             assert row.status == ("failed" if attempt == outbox.MAX_ATTEMPTS else "pending")
             assert (await s.get(MaxDelivery, later)).attempts == 0
-            row.available_at = outbox.utcnow()
+            row.available_at = func.now()
             await s.commit()
     db.client.send.side_effect, db.client.send.return_value = None, "other-mid"
     await enqueue(db, emp_id=2)
@@ -281,7 +285,7 @@ asyncio.run(outbox.process_one())
         assert row.status == "running"
         assert row.attempts == (outbox.MAX_ATTEMPTS if last_attempt else 1)
         assert not await outbox.process_one()  # после аварии также выдерживаем паузу
-        row.available_at = outbox.utcnow()
+        row.available_at = func.now()
         await s.commit()
     assert await outbox.process_one()
     async with db.session() as s:
