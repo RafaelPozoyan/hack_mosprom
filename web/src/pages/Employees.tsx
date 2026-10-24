@@ -124,13 +124,13 @@ export default function Employees() {
                 : NOBODY[filter]}
           </Empty>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead className="text-left text-xs text-ink/45">
               <tr className="border-b border-ink/[0.07]">
-                <th className="py-2.5 font-medium">Сотрудник</th>
-                <th className="font-medium">Площадка</th>
-                <th className="font-medium">Первый день</th>
-                <th className="font-medium">Где сейчас</th>
+                <th className="w-[28%] py-2.5 font-medium">Сотрудник</th>
+                <th className="w-[14%] font-medium">Площадка</th>
+                <th className="w-[10%] font-medium">Первый день</th>
+                <th className="w-[22%] font-medium">Где сейчас</th>
                 <th className="text-right font-medium">Статус</th>
               </tr>
             </thead>
