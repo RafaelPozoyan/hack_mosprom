@@ -5,6 +5,4 @@ materials/**
 backend/data/**
 backend/media/upload_*
 backend/eval/results.json
-.claude/**
-.codex/**
-.agents/**
+**/worktrees/**
