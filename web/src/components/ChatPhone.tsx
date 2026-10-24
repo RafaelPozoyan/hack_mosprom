@@ -1,7 +1,8 @@
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { FastForward, FileText, QrCode, Send } from 'lucide-react'
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
-import { api, fmtTime, type ChatMessage, type Employee } from '../api'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { api, fmtTime, type ChatMessage, type Employee, type UpNext } from '../api'
 import { KorsikMark } from './ui'
 
 const URL_RE = /(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s)]+|\*\*[^*]+\*\*)/g
@@ -125,6 +126,18 @@ function Bubble({
   )
 }
 
+/** Плановое время сообщений шага: мелкая подпись над первым из них, чтобы не спорить с текстом. */
+function PlanLabel({ text }: { text: string }) {
+  return (
+    <div
+      title="Когда это сообщение уходит новичку по плану адаптации"
+      className="mt-3 mb-1 text-center text-[11px] leading-tight text-ink/60"
+    >
+      {text}
+    </div>
+  )
+}
+
 export default function ChatPhone({
   employee,
   onActivity,
@@ -140,6 +153,27 @@ export default function ChatPhone({
   const [nextInfo, setNextInfo] = useState<string | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   const base = `/api/demo/employees/${employee.id}`
+  const qc = useQueryClient()
+  const { data: upNext, isError: upNextFailed } = useQuery({
+    queryKey: ['demo-next', base],
+    queryFn: () => api.get<UpNext | null>(`${base}/next`),
+    refetchInterval: 10_000,
+  })
+  const hint = upNextFailed
+    ? 'Не удалось узнать, какой шаг дальше. Обновите страницу.'
+    : upNext === null
+      ? 'Запланированных шагов больше нет'
+      : upNext && `Дальше: ${upNext.title}${upNext.plan ? ` — ${upNext.plan}` : ''}`
+  // Подпись стоит перед первым сообщением шага; следующие с тем же временем идут под ней.
+  const rows = useMemo(() => {
+    const out: { m: ChatMessage; label: string | null }[] = []
+    let last: string | null | undefined
+    for (const m of messages) {
+      out.push({ m, label: m.plan && m.plan !== last ? m.plan : null })
+      if (m.plan) last = m.plan
+    }
+    return out
+  }, [messages])
 
   useEffect(() => {
     let alive = true
@@ -154,13 +188,14 @@ export default function ChatPhone({
       }
       if (ev.type === 'edit')
         setMessages((prev) => prev.map((x) => (x.id === ev.message.id ? ev.message : x)))
+      qc.invalidateQueries({ queryKey: ['demo-next', base] })
       onActivity?.()
     }
     return () => {
       alive = false
       es.close()
     }
-  }, [base, onActivity])
+  }, [base, onActivity, qc])
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: 'smooth' })
@@ -205,6 +240,7 @@ export default function ChatPhone({
       setNextInfo('Не удалось подтвердить результат. Проверьте путь адаптации перед повтором.')
     } finally {
       setTyping(false)
+      qc.invalidateQueries({ queryKey: ['demo-next', base] })
     }
   }
 
@@ -226,8 +262,11 @@ export default function ChatPhone({
                 : 'Сообщений пока нет'}
             </div>
           )}
-          {messages.map((m) => (
-            <Bubble key={m.id} m={m} onButton={press} />
+          {rows.map(({ m, label }) => (
+            <Fragment key={m.id}>
+              {label && <PlanLabel text={label} />}
+              <Bubble m={m} onButton={press} />
+            </Fragment>
           ))}
           {typing && (
             <div className="my-1.5 inline-flex gap-1 rounded-2xl rounded-bl-md bg-white px-3 py-2.5 shadow-sm">
@@ -273,9 +312,12 @@ export default function ChatPhone({
         )}
         <button
           onClick={next}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-dashed border-sky/60 bg-sky-50 px-3 py-2 text-sm font-medium text-sky-800"
+          className="inline-flex max-w-full flex-col items-center gap-0.5 rounded-xl border border-dashed border-sky/60 bg-sky-50 px-3 py-2 text-center text-sm font-medium text-sky-800"
         >
-          <FastForward size={16} /> Перемотать к следующему шагу
+          <span className="inline-flex items-center gap-1.5">
+            <FastForward size={16} /> Перемотать к следующему шагу
+          </span>
+          {hint && <span className="text-xs font-normal text-sky-900/70">{hint}</span>}
         </button>
       </div>
       {nextInfo && <div className="w-[360px] text-center text-xs text-ink/55">{nextInfo}</div>}
