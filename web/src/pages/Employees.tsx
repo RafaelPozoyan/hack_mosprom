@@ -13,6 +13,7 @@ import {
   Field,
   Modal,
   Progress,
+  Tabs,
   inputCls,
   plural,
   siteName,
@@ -36,6 +37,28 @@ export function StageCell({ e }: { e: Pick<Employee, 'status' | 'start_date' | '
   )
 }
 
+type Filter = 'all' | 'waiting' | 'support' | 'new'
+
+// «Нужна поддержка» — только высокая тревога (signal.urgent): остальные тревожные ответы видны в строке
+// человека, но в этот фильтр не попадают. «Ещё не вышли» — до первого рабочего дня.
+const FILTERS: Record<Filter, (e: Employee) => boolean> = {
+  all: () => true,
+  waiting: (e) => !!e.open_ticket,
+  support: (e) => !!e.signal?.urgent,
+  new: (e) => probationDay(e).day < 1,
+}
+
+const NOBODY: Record<Filter, string> = {
+  all: 'Никого не нашлось',
+  waiting: 'Сейчас никто не ждёт ответа HR',
+  support: 'Сейчас никому не нужна поддержка',
+  new: 'Все новички уже вышли на работу',
+}
+
+// Порядок по срочности: сначала обращение без ответа и высокая тревога, потом остальные тревожные ответы.
+// Одинаково срочные остаются в порядке сервера — по дате выхода, новые сверху.
+const urgency = (e: Employee) => (e.open_ticket ? 2 : 0) + (e.signal ? (e.signal.urgent ? 2 : 1) : 0)
+
 export default function Employees() {
   const qc = useQueryClient()
   const nav = useNavigate()
@@ -48,7 +71,12 @@ export default function Employees() {
   const [open, setOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [q, setQ] = useState('')
-  const list = emps.filter((e) => `${e.full_name} ${e.position}`.toLowerCase().includes(q.toLowerCase()))
+  const [filter, setFilter] = useState<Filter>('all')
+  const list = emps
+    .filter(
+      (e) => FILTERS[filter](e) && `${e.full_name} ${e.position}`.toLowerCase().includes(q.toLowerCase()),
+    )
+    .sort((a, b) => urgency(b) - urgency(a))
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
@@ -64,20 +92,36 @@ export default function Employees() {
         </div>
       </div>
       <Card>
-        <div className="relative mb-3 max-w-sm">
-          <Search size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-ink/35" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Поиск по имени или должности"
-            className={`${inputCls} w-full pl-9`}
-          />
-        </div>
+        {emps.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={filter}
+              onChange={setFilter}
+              items={[
+                { id: 'all', label: 'Все' },
+                { id: 'waiting', label: 'Ждут ответа', count: emps.filter(FILTERS.waiting).length },
+                { id: 'support', label: 'Нужна поддержка', count: emps.filter(FILTERS.support).length },
+                { id: 'new', label: 'Ещё не вышли' },
+              ]}
+            />
+            <div className="relative w-full max-w-xs">
+              <Search size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-ink/35" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Поиск по имени или должности"
+                className={`${inputCls} w-full pl-9`}
+              />
+            </div>
+          </div>
+        )}
         {list.length === 0 ? (
-          <Empty icon={<UserPlus className="text-ink/30" />}>
-            {emps.length
-              ? 'Никого не нашлось'
-              : 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'}
+          <Empty icon={emps.length === 0 ? <UserPlus className="text-ink/30" /> : undefined}>
+            {emps.length === 0
+              ? 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'
+              : q.trim()
+                ? NOBODY.all
+                : NOBODY[filter]}
           </Empty>
         ) : (
           <table className="w-full text-sm">
@@ -112,7 +156,7 @@ export default function Employees() {
                     <StageCell e={e} />
                   </td>
                   <td className="text-right">
-                    <div className="flex justify-end gap-1">
+                    <div className="flex flex-wrap justify-end gap-1">
                       {e.signal && (
                         <Badge tone={e.signal.urgent ? 'red' : 'amber'}>
                           {e.signal.reason} · {timeAgo(e.signal.at)}
