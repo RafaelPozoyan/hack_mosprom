@@ -5,7 +5,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -86,7 +86,7 @@ async def test_webhook_commits_before_ack_and_deduplicates(db, api, monkeypatch)
     assert not await inbox.process_one()
     assert (await api.post("/max/webhook", json=event())).status_code == 200
     assert not await inbox.process_one()
-    handler.assert_awaited_once_with(event(), raise_errors=True)
+    handler.assert_awaited_once_with(event(), raise_errors=True, context=ANY)
     async with db() as s:
         row = await s.scalar(select(MaxUpdate))
         assert row.status == "done" and row.payload == {} and row.done_at
