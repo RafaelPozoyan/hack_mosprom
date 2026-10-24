@@ -221,7 +221,7 @@ export default function ChatPhone({
     try {
       const r = await api.post<{ ok: boolean; status?: string; run_at?: string }>(`${base}/next`)
       const status: Record<string, string> = {
-        await_start: 'Ждём запуска бота по QR',
+        await_start: 'Приглашение ещё не открыто',
         done: 'Шаг выполнен',
         skipped: 'Шаг пропущен',
         blocked: 'Ждём обязательный ответ',
@@ -258,7 +258,7 @@ export default function ChatPhone({
           {messages.length === 0 && (
             <div className="mt-24 text-center text-xs text-ink/50">
               {employee.status === 'invited'
-                ? 'Сотрудник ещё не запустил бота. Нажмите «Старт по QR».'
+                ? 'Сотрудник ещё не запустил бота. Нажмите «Новичок сканирует QR».'
                 : 'Сообщений пока нет'}
             </div>
           )}
