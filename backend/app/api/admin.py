@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import scheduler
 from app.analytics import digest, metrics
 from app.analytics.sentiment import manager_topics
-from app.bot import escalation
+from app.bot import escalation, progress
+from app.bot.progress import StepBlocked
 from app.bot.scenario import (
     add_months,
     button_rows,
@@ -349,9 +350,16 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
         if not owned:
             raise HTTPException(409, "Сейчас уже отправляется другой шаг. Дождитесь завершения и повторите.")
         await s.refresh(e)  # диалог мог изменить состояние, пока ожидали локальную блокировку
+        current_step = step(step_id, e.site_code)
+        if current_step is None:
+            raise HTTPException(404, "Шаг для этой площадки не найден")
+        try:
+            progress.check_step(e, current_step)
+        except StepBlocked as exc:
+            raise HTTPException(409, str(exc)) from exc
         j = await s.scalar(select(Job).where(
             Job.employee_id == emp_id, Job.kind == "step", Job.ref == step_id,
-            Job.status.in_(["pending", "running"]),
+            Job.status.in_(["pending", "running", "blocked"]),
         ).order_by(Job.run_at, Job.id))
         if j:
             if not await guard.scalar(select(func.pg_try_advisory_xact_lock(scheduler.JOB_LOCK_NAMESPACE, j.id))):
@@ -374,6 +382,8 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
         j.status, j.attempts = "running", 1
         await s.commit()
         await scheduler._execute(s, j)
+        if j.status == "blocked":
+            raise HTTPException(409, j.error)
         if j.status != "done":
             raise HTTPException(503, "Отправка не завершена. Задача сохранена для автоматического повтора; проверьте её состояние позже.")
     return {"ok": True}

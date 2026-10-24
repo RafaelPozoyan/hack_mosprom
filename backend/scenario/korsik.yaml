@@ -51,6 +51,7 @@ commands:
   hr: relay_hr
 
 steps:
+  # Решение команды 24.10: доступы, день 3, неделя 2 и итоговый опрос требуют ответа.
   # ───────────────────────── За 2-3 дня до выхода: запуск по QR с оффера ─────────────────────────
   - id: welcome
     title: "Знакомство с Корсиком (запуск по QR с оффера)"
@@ -254,6 +255,7 @@ steps:
         image: map_luzhniki.png
 
   - id: d1_access
+    required: true
     title: "Проверка доступов и рабочего места"
     at: {workday: 1, time: "12:00"}
     sites: [GrPP, Luzhniki]
@@ -268,6 +270,7 @@ steps:
     then: [d1_postcard]
 
   - id: d1_access
+    required: true
     title: "Проверка доступов и рабочего места"
     at: {workday: 1, time: "12:00"}
     sites: [GTP]
@@ -392,6 +395,7 @@ steps:
       - ai: Спортивный комплекс на территории предприятия — расписание и оснащение
 
   - id: d3_survey
+    required: true
     title: "Опрос по итогам 3-го дня"
     at: {workday: 3, time: "17:30"}
     messages:
@@ -419,6 +423,7 @@ steps:
       - text: Мы надеемся, что {ты присоединишься|вы присоединитесь} к нам на ближайших мероприятиях и {насладишься|насладитесь} дружелюбной и позитивной атмосферой!
 
   - id: w2_check
+    required: true
     title: "Чек-ин через 2 недели (9 вопросов)"
     at: {weeks: 2, time: "10:00"}
     messages:
@@ -545,6 +550,7 @@ steps:
         image: postcard_3.png
 
   - id: final
+    required: true
     title: "Итоги испытательного срока + опрос"
     at: {probation_end: true, time: "09:00"}
     messages:
