@@ -1,5 +1,6 @@
 import clsx from 'clsx'
-import { createContext, useContext, type ReactNode } from 'react'
+import { X } from 'lucide-react'
+import { createContext, useContext, useEffect, type ReactNode } from 'react'
 
 // --- режим демонстрации и роль ------------------------------------------------------------------------
 
@@ -180,6 +181,13 @@ export function Modal({
   children: ReactNode
   wide?: boolean
 }) {
+  // Закрыть можно тремя способами: крестиком, клавишей Esc и щелчком по затемнённому фону.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
   if (!open) return null
   return (
     <div
@@ -187,10 +195,24 @@ export function Modal({
       onClick={onClose}
     >
       <div
-        className={clsx('w-full rounded-3xl bg-white p-6 shadow-2xl', wide ? 'max-w-2xl' : 'max-w-lg')}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className={clsx(
+          'relative w-full rounded-3xl bg-white p-6 shadow-2xl',
+          wide ? 'max-w-2xl' : 'max-w-lg',
+        )}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="mb-5 text-lg font-semibold">{title}</h3>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Закрыть"
+          className="absolute top-4 right-4 grid size-8 place-items-center rounded-full text-ink/40 transition hover:bg-ink/[0.06] hover:text-ink"
+        >
+          <X size={18} />
+        </button>
+        <h3 className="mb-5 pr-10 text-lg font-semibold">{title}</h3>
         {children}
       </div>
     </div>
