@@ -121,15 +121,28 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
   const demo = useDemo()
   const file = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
   const st = STATUS[t.status] ?? STATUS.pending
   const Icon = st.icon
   const run = async (f?: File) => {
     setBusy(true)
     const fd = new FormData()
     if (f) fd.append('file', f)
-    await api.post(`/api/employees/${empId}/steps/${t.step_id}/run`, fd)
-    setBusy(false)
-    onDone()
+    setError('')
+    try {
+      await api.post(`/api/employees/${empId}/steps/${t.step_id}/run`, fd)
+      onDone()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : ''
+      setError(message.startsWith('409:')
+        ? 'Сейчас выполняются другие отправки. Дождитесь завершения, обновите карточку и повторите при необходимости.'
+        : message.startsWith('503:')
+          ? 'Отправка не завершена. Корсик повторит её автоматически. Обновите карточку позже.'
+          : 'Не удалось подтвердить отправку. Обновите карточку и проверьте сообщения перед повтором.')
+    } finally {
+      setBusy(false)
+      if (file.current) file.current.value = ''
+    }
   }
   const sent = t.status === 'sent' || t.status === 'done'
   return (
@@ -142,6 +155,7 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
           {t.audience === 'recruiter' && <Badge tone="blue">рекрутеру</Badge>}
         </div>
         <div className="mt-0.5 line-clamp-1 text-xs text-ink/45">{t.preview}</div>
+        {error && <div role="alert" className="mt-2 text-sm text-rose-600">{error}</div>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <span className="text-xs text-ink/45">{t.run_at ? fmtDateTime(t.run_at) : st.label}</span>

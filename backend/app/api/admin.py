@@ -5,14 +5,16 @@ import io
 import json
 import secrets
 from datetime import date
+from pathlib import Path
 
 import segno
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import scheduler
 from app.analytics import digest, metrics
 from app.analytics.sentiment import manager_topics
 from app.bot import escalation
@@ -22,7 +24,6 @@ from app.bot.scenario import (
     phase_of,
     reload_scenario,
     render,
-    run_step,
     save_step_texts,
     scenario,
     schedule_employee,
@@ -43,6 +44,7 @@ from app.models import (
     Question,
     Site,
     Staff,
+    StepAttachment,
     SurveyAnswer,
     Ticket,
 )
@@ -337,18 +339,43 @@ async def employee_qr(emp_id: int, s: AsyncSession = Depends(get_session)):
 async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File(None), s: AsyncSession = Depends(get_session)):
     """Запуск шага вручную: «по отмашке рекрутера» (ТЗ) или перемотка таймлайна в демо."""
     e = await _emp(s, emp_id)
-    await run_step(s, e, step_id)
-    if file is not None:
-        from app import channels
-        from app.channels import OutMessage
-
-        name = f"upload_{secrets.token_hex(4)}_{file.filename}"
-        (settings().media_dir / name).write_bytes(await file.read())
-        await channels.send(s, e, OutMessage(text="📎 " + file.filename, file=name), step_id=step_id)
-    j = await s.scalar(select(Job).where(Job.employee_id == emp_id, Job.ref == step_id, Job.status == "pending"))
-    if j:
-        j.status = "done"
+    if step(step_id, e.site_code) is None:
+        raise HTTPException(404, "Шаг для этой площадки не найден")
+    # Не ждём свободного исполнителя: задержанный двойной клик нельзя считать намеренным повтором.
+    if scheduler._job_slots.locked():
+        raise HTTPException(409, "Сейчас выполняются другие отправки. Подождите и повторите.")
+    async with (scheduler._job_slots, scheduler.session() as guard, guard.begin(),
+                scheduler.employee_owner(guard, emp_id) as owned):
+        if not owned:
+            raise HTTPException(409, "Сейчас уже отправляется другой шаг. Дождитесь завершения и повторите.")
+        await s.refresh(e)  # диалог мог изменить состояние, пока ожидали локальную блокировку
+        j = await s.scalar(select(Job).where(
+            Job.employee_id == emp_id, Job.kind == "step", Job.ref == step_id,
+            Job.status.in_(["pending", "running"]),
+        ).order_by(Job.run_at, Job.id))
+        if j:
+            if not await guard.scalar(select(func.pg_try_advisory_xact_lock(scheduler.JOB_LOCK_NAMESPACE, j.id))):
+                raise HTTPException(409, "Этот шаг уже запускается. Дождитесь завершения и повторите.")
+            await s.refresh(j)
+            if j.status == "running" or j.attempts:
+                raise HTTPException(409, "Предыдущая отправка ещё обрабатывается. Проверьте её состояние перед повтором.")
+        else:
+            j = Job(employee_id=emp_id, kind="step", ref=step_id, run_at=scheduler.utcnow())
+            s.add(j)
+        await s.flush()
+        if file is not None:
+            name = Path((file.filename or "Вложение").replace("\\", "/")).name or "Вложение"
+            filename = f"upload_{secrets.token_hex(16)}{Path(name).suffix[:16]}"
+            path = settings().media_dir / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(await file.read())
+            s.add(StepAttachment(job_id=j.id, file=filename, name=name))
+        # Файл остаётся на диске и при неопределённом результате commit.
+        j.status, j.attempts = "running", 1
         await s.commit()
+        await scheduler._execute(s, j)
+        if j.status != "done":
+            raise HTTPException(503, "Отправка не завершена. Задача сохранена для автоматического повтора; проверьте её состояние позже.")
     return {"ok": True}
 
 

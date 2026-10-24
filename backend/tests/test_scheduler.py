@@ -20,7 +20,7 @@ from app.analytics import digest
 from app.api import demo
 from app.bot import scenario, surveys
 from app.db import Base
-from app.models import Employee, Job, Site, Staff
+from app.models import Employee, Job, Site, Staff, StepAttachment
 
 
 @pytest_asyncio.fixture
@@ -37,7 +37,7 @@ async def db(monkeypatch):
     try:
         async with engine.begin() as c:
             await c.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[
-                Site.__table__, Staff.__table__, Employee.__table__, Job.__table__,
+                Site.__table__, Staff.__table__, Employee.__table__, Job.__table__, StepAttachment.__table__,
             ]))
         @asynccontextmanager
         async def session():
@@ -49,7 +49,7 @@ async def db(monkeypatch):
             s.add(Site(code="GTP", name="Демо", kind="plant"))
             await s.flush()
             s.add(Employee(id=1, full_name="Демо Иван Петров", first_name="Иван", site_code="GTP",
-                           start_date=date(2026, 10, 26), probation_end=date(2027, 1, 26), invite_code="demo"))
+                           status="active", start_date=date(2026, 10, 26), probation_end=date(2027, 1, 26), invite_code="demo"))
             await s.commit()
         yield SimpleNamespace(session=factory, schema=schema, url=url)
     finally:
@@ -260,3 +260,170 @@ async def test_persisted_demo_request_survives_loss_of_background_task(db, monke
     async with db.session() as s:
         j = await s.get(Job, jid)
         assert j.status == "done" and j.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_request_cannot_overlap_scheduler(db, monkeypatch):
+    from fastapi import HTTPException
+
+    from app.api import admin
+
+    jid = await job(db)
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def scheduled(*args):
+        calls.append(args)
+        started.set()
+        await release.wait()
+    monkeypatch.setattr(scenario, "run_step", scheduled)
+    worker = asyncio.create_task(scheduler.run_job(jid))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        async with db.session() as s:
+            with pytest.raises(HTTPException) as exc:
+                await admin.run_step_now(1, "welcome", None, s)
+            assert exc.value.status_code == 409
+        assert len(calls) == 1
+    finally:
+        release.set()
+        await worker
+
+
+@pytest_asyncio.fixture
+async def manual_api(db, monkeypatch, tmp_path):
+    from app.api import admin
+    from app.config import settings
+
+    async def get_session():
+        async with db.session() as s:
+            yield s
+    monkeypatch.setattr(settings(), "media_dir", tmp_path)
+    main.app.dependency_overrides[admin.get_session] = get_session
+    main.app.dependency_overrides[admin.auth] = lambda: None
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://test") as api:
+            yield api
+    finally:
+        main.app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_manual_owns_step_and_file_until_completion(db, manual_api, monkeypatch, tmp_path):
+    from app import channels
+
+    jid = await job(db, ref="d3_plan", run_at=scheduler.utcnow() + timedelta(days=1))
+    started, release = asyncio.Event(), asyncio.Event()
+    calls = []
+    async def handle(s, emp, ref):
+        calls.append(ref)
+        await s.commit()
+        started.set()
+        await release.wait()
+    send = AsyncMock()
+    monkeypatch.setattr(scenario, "run_step", handle)
+    monkeypatch.setattr(channels, "send", send)
+    url = "/api/employees/1/steps/d3_plan/run"
+    worker = asyncio.create_task(manual_api.post(url, files={"file": ("../plan.pdf", b"first file")}))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert not await scheduler.run_job(jid)
+        assert (await manual_api.post(url, files={"file": ("second.pdf", b"second file")})).status_code == 409
+        assert len(list(tmp_path.iterdir())) == 1  # отклонённый запрос не сохраняет файл
+    finally:
+        release.set()
+        result = await worker
+    assert result.status_code == 200
+    assert calls == ["d3_plan"]
+    send.assert_awaited_once()
+    async with db.session() as s:
+        assert (await s.get(Job, jid)).status == "done"
+        attachment = await s.get(StepAttachment, jid)
+        assert attachment.name == "plan.pdf"
+        assert (tmp_path / attachment.file).read_bytes() == b"first file"
+        assert send.await_args.args[2].file == attachment.file
+    # Завершённый шаг можно намеренно отправить повторно с новым файлом.
+    assert (await manual_api.post(url, files={"file": ("second.pdf", b"second file")})).status_code == 200
+    assert calls == ["d3_plan", "d3_plan"]
+    async with db.session() as s:
+        assert len(list(await s.scalars(select(Job).where(Job.status == "done")))) == 2
+        assert len(list(await s.scalars(select(StepAttachment)))) == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_failure_retains_file_for_scheduler_retry(db, manual_api, monkeypatch, tmp_path):
+    from app import channels
+
+    monkeypatch.setattr(scenario, "run_step", AsyncMock())
+    send = AsyncMock(side_effect=TimeoutError("test transport failure"))
+    monkeypatch.setattr(channels, "send", send)
+    url = "/api/employees/1/steps/d3_plan/run"
+    assert (await manual_api.post(url, files={"file": ("plan.pdf", b"persisted")})).status_code == 503
+    async with db.session() as s:
+        j = await s.scalar(select(Job))
+        assert j.status == "pending" and j.attempts == 1 and j.error
+        attachment = await s.get(StepAttachment, j.id)
+        assert (tmp_path / attachment.file).read_bytes() == b"persisted"
+        jid = j.id
+    assert (await manual_api.post(url, files={"file": ("replacement.pdf", b"wrong")})).status_code == 409
+    assert len(list(tmp_path.iterdir())) == 1
+    async with db.session() as s:
+        (await s.get(Job, jid)).run_at = scheduler.utcnow()
+        await s.commit()
+    send.side_effect = None
+    assert await scheduler.run_job(jid)
+    assert send.await_args.args[2].file == attachment.file
+    async with db.session() as s:
+        assert (await s.get(Job, jid)).status == "done"
+
+
+@pytest.mark.asyncio
+async def test_manual_validates_employee_and_site_step_before_saving_file(db, manual_api, tmp_path):
+    for url in ["/api/employees/999/steps/d3_plan/run", "/api/employees/1/steps/not-a-step/run",
+                "/api/employees/1/steps/d1_end/run"]:
+        assert (await manual_api.post(url, files={"file": ("plan.pdf", b"unused")})).status_code == 404
+    assert not list(tmp_path.iterdir())
+    async with db.session() as s:
+        assert not list(await s.scalars(select(Job)))
+
+
+@pytest.mark.asyncio
+async def test_interrupted_manual_request_keeps_recoverable_job_and_attachment(db, manual_api, monkeypatch, tmp_path):
+    from app import channels
+
+    started = asyncio.Event()
+    async def handle(*args):
+        started.set()
+        await asyncio.Event().wait()
+    monkeypatch.setattr(scenario, "run_step", handle)
+    worker = asyncio.create_task(manual_api.post("/api/employees/1/steps/d3_plan/run",
+                                                files={"file": ("plan.pdf", b"recover me")}))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+    finally:
+        worker.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await worker
+    async with db.session() as s:
+        j = await s.scalar(select(Job))
+        assert j.status == "running"
+        attachment = await s.get(StepAttachment, j.id)
+        assert (tmp_path / attachment.file).read_bytes() == b"recover me"
+        jid = j.id
+    monkeypatch.setattr(scenario, "run_step", AsyncMock())
+    send = AsyncMock()
+    monkeypatch.setattr(channels, "send", send)
+    assert await scheduler.run_job(jid)
+    assert send.await_args.args[2].file == attachment.file
+    async with db.session() as s:
+        assert (await s.get(Job, jid)).status == "done"
+
+
+@pytest.mark.asyncio
+async def test_busy_executor_does_not_queue_a_late_manual_duplicate(db, manual_api, tmp_path):
+    async with scheduler._job_slots, scheduler._job_slots:
+        r = await asyncio.wait_for(manual_api.post("/api/employees/1/steps/d3_plan/run",
+                                                  files={"file": ("plan.pdf", b"unused")}), timeout=5)
+        assert r.status_code == 409
+    assert not list(tmp_path.iterdir())
+    async with db.session() as s:
+        assert not list(await s.scalars(select(Job)))
