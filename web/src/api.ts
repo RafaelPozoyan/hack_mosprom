@@ -26,6 +26,7 @@ export type Employee = {
   manager: string | null
   manager_id: number | null
   recruiter: string | null
+  recruiter_id: number | null
   address_form: 'ty' | 'vy' | null
   channel: 'web' | 'max'
   status: 'invited' | 'active' | 'finished'
