@@ -318,6 +318,7 @@ def test_spa_never_serves_files_outside_build(tmp_path):
 
 class FakeSession:
     def __init__(self):
+        self.info = {}
         self.added = []
 
     async def commit(self):

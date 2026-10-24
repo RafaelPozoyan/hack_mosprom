@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
 from app.channels import ADMIN_FEED, Button, OutMessage
+from app.db import after_commit
 from app.models import Employee, Job
 
 REMINDER_KIND = "required_reminder"
@@ -114,4 +115,6 @@ async def escalate(s: AsyncSession, emp: Employee, key: str) -> None:
     )
     # Обращение, задача уведомления и защита от повторной эскалации фиксируются вместе.
     await s.commit()
-    channels.hub.publish(ADMIN_FEED, {"type": "ticket", "id": ticket.id, "kind": ticket.kind})
+    after_commit(
+        s, channels.hub.publish, ADMIN_FEED, {"type": "ticket", "id": ticket.id, "kind": ticket.kind}
+    )

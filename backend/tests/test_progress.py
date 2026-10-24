@@ -20,7 +20,18 @@ from app.analytics import sentiment
 from app.api import admin, demo
 from app.bot import dialog, escalation, followup, progress, scenario, surveys
 from app.db import Base
-from app.models import Analysis, Employee, Job, Message, Site, Staff, StepAttachment, SurveyAnswer, Ticket
+from app.models import (
+    Analysis,
+    Employee,
+    Job,
+    Message,
+    Site,
+    Staff,
+    StepAttachment,
+    SurveyAnswer,
+    Ticket,
+    TicketDeadline,
+)
 
 
 @pytest_asyncio.fixture
@@ -46,6 +57,7 @@ async def db(monkeypatch):
                         Job.__table__,
                         StepAttachment.__table__,
                         Ticket.__table__,
+                        TicketDeadline.__table__,
                         Message.__table__,
                         SurveyAnswer.__table__,
                         Analysis.__table__,

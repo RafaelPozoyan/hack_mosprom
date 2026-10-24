@@ -14,6 +14,10 @@ OUT = Path(__file__).resolve().parents[1] / "media"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 W, H = 1200, 800
+# MAX обрезает картинку под форму пузыря: в узком (до 1:1) срезает бока, в широком (до 1,75:1) — верх и низ.
+# Текст и знак держим внутри этих полей, по краям — только декор.
+SAFE_X, SAFE_Y = 210, 70
+FOOTER = "Корсик · Группа ПОЛИПЛАСТИК · шаблон изображения, сгенерирован автоматически"
 DARK, DARK2, LIME, WHITE = (11, 46, 58), (16, 78, 96), (166, 206, 57), (255, 255, 255)
 
 CARDS = {
@@ -53,9 +57,10 @@ def background(seed: int) -> Image.Image:
         t = y / H
         d.line([(0, y), (W, y)], fill=tuple(int(a + (b - a) * t) for a, b in zip(DARK, DARK2, strict=True)))
     rnd = random.Random(seed)
-    for _ in range(26):  # «воксели» в стиле айдентики хакатона
+    for _ in range(26):  # «воксели» в стиле айдентики хакатона — в боковых полосах, которые не жалко обрезать
         s = rnd.choice([24, 32, 48])
-        x, y = rnd.randrange(int(W * 0.7), W - s), rnd.randrange(0, H - 100 - s)
+        x = rnd.choice([rnd.randrange(0, SAFE_X - 40 - s), rnd.randrange(W - SAFE_X + 40, W - s)])
+        y = rnd.randrange(0, H - s)
         color = LIME if rnd.random() < 0.6 else (60, 160, 190)
         d.rectangle([x, y, x + s, y + s], fill=color)
         d.rectangle([x + s // 4, y + s // 4, x + s - 4, y + s - 4], outline=DARK, width=2)
@@ -69,30 +74,42 @@ def paw(d: ImageDraw.ImageDraw, cx: int, cy: int, r: int) -> None:
         d.ellipse([tx - r // 3, ty - r // 3, tx + r // 3, ty + r // 3], fill=LIME)
 
 
+def wrap(d: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int) -> list[str]:
+    """Перенос по ширине в пикселях: число букв не учитывает разную ширину символов."""
+    lines, cur = [], ""
+    for word in text.split():
+        probe = f"{cur} {word}".strip()
+        if cur and d.textlength(probe, font=font) > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = probe
+    return [*lines, cur]
+
+
 def card(name: str, title: str, subtitle: str, seed: int) -> None:
     img = background(seed)
     d = ImageDraw.Draw(img)
-    paw(d, 140, 190, 46)
+    width = W - 2 * (SAFE_X + 30)  # ещё поле, чтобы текст не упирался в край даже в квадратном пузыре
+    big, small = ImageFont.truetype(FONT_BOLD, 60), ImageFont.truetype(FONT, 32)
+    titles, subtitles = wrap(d, title, big, width), wrap(d, subtitle, small, width)
+    block = 125 + 36 + 74 * len(titles) + 16 + 44 * len(subtitles)  # знак, отступ, заголовок, подпись
+    y = (H - block) // 2
+    paw(d, W // 2, y + 93, 40)
+    y += 125 + 36
+    for line in titles:
+        d.text((W // 2, y), line, font=big, fill=WHITE, anchor="ma")
+        y += 74
+    y += 16
+    for line in subtitles:
+        d.text((W // 2, y), line, font=small, fill=LIME, anchor="ma")
+        y += 44
     d.text(
-        (80, 300),
-        "\n".join(textwrap.wrap(title, 20)),
-        font=ImageFont.truetype(FONT_BOLD, 64),
-        fill=WHITE,
-        spacing=10,
-    )
-    lines = textwrap.wrap(subtitle, 34)
-    d.text(
-        (80, 300 + 80 * len(textwrap.wrap(title, 20)) + 20),
-        "\n".join(lines),
-        font=ImageFont.truetype(FONT, 34),
-        fill=LIME,
-        spacing=8,
-    )
-    d.text(
-        (80, H - 60),
-        "Корсик · Группа ПОЛИПЛАСТИК · шаблон изображения, сгенерирован автоматически",
-        font=ImageFont.truetype(FONT, 18),
+        (W // 2, H - SAFE_Y - 10),
+        FOOTER,
+        font=ImageFont.truetype(FONT, 17),
         fill=(150, 190, 200),
+        anchor="ms",
     )
     img.save(OUT / name)
 

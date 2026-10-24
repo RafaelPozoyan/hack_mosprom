@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app import channels, scheduler
 from app.bot import escalation
 from app.db import Base
-from app.models import Employee, Job, Message, Site, Staff, Ticket
+from app.models import Employee, Job, Message, Site, Staff, Ticket, TicketDeadline
 
 
 @pytest_asyncio.fixture
@@ -41,6 +41,7 @@ async def db(monkeypatch):
                         Staff.__table__,
                         Employee.__table__,
                         Ticket.__table__,
+                        TicketDeadline.__table__,
                         Message.__table__,
                         Job.__table__,
                     ],
@@ -97,7 +98,7 @@ async def test_ticket_and_pending_job_survive_session_close(db):
     db.client.send.assert_not_awaited()
     db.handoff.assert_not_awaited()
     async with db.session() as s:
-        j = await s.scalar(select(Job))
+        j = await s.scalar(select(Job).where(Job.kind == "handoff"))
         assert j.kind == "handoff" and j.ref == str(tid) and j.status == "pending"
         assert j.employee_id is None  # подготовка резюме не блокирует диалог сотрудника
     assert await scheduler.tick() == 1
@@ -105,7 +106,7 @@ async def test_ticket_and_pending_job_survive_session_close(db):
     async with db.session() as s:
         t = await s.get(Ticket, tid)
         assert t.hr_chat_mid == "card-mid" and "Демо-проблема" in t.summary
-        assert (await s.scalar(select(Job))).status == "done"
+        assert (await s.scalar(select(Job).where(Job.kind == "handoff"))).status == "done"
     db.client.send.assert_awaited_once()
 
 
@@ -129,7 +130,7 @@ async def test_transport_failure_retries_card(db):
     db.client.send.side_effect = RuntimeError("transport failed")
     assert await scheduler.tick() == 1
     async with db.session() as s:
-        j = await s.scalar(select(Job))
+        j = await s.scalar(select(Job).where(Job.kind == "handoff"))
         assert j.status == "pending" and j.attempts == 1 and j.error
         assert (await s.get(Ticket, tid)).hr_chat_mid is None
         j.run_at = scheduler.utcnow()
@@ -137,7 +138,7 @@ async def test_transport_failure_retries_card(db):
     db.client.send.side_effect = None
     assert await scheduler.tick() == 1
     async with db.session() as s:
-        assert (await s.scalar(select(Job))).status == "done"
+        assert (await s.scalar(select(Job).where(Job.kind == "handoff"))).status == "done"
         assert (await s.get(Ticket, tid)).hr_chat_mid == "card-mid"
 
 
@@ -160,7 +161,7 @@ async def test_recruiter_retry_keeps_confirmed_group_card(db):
     db.client.send.side_effect = send
     assert await scheduler.tick() == 1
     async with db.session() as s:
-        j = await s.scalar(select(Job))
+        j = await s.scalar(select(Job).where(Job.kind == "handoff"))
         assert j.status == "pending"
         j.run_at = scheduler.utcnow()
         await s.commit()
@@ -211,7 +212,7 @@ async def test_demo_without_max_keeps_summary_in_panel(db, monkeypatch):
     async with db.session() as s:
         t = await s.get(Ticket, tid)
         assert "Демо-проблема" in t.summary and t.hr_chat_mid is None
-        assert (await s.scalar(select(Job))).status == "done"
+        assert (await s.scalar(select(Job).where(Job.kind == "handoff"))).status == "done"
 
 
 @pytest.mark.asyncio

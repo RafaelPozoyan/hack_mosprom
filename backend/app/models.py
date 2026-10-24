@@ -84,7 +84,7 @@ class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
-    # step | reminder | required_reminder | required_escalation | digest | handoff
+    # step | reminder | required_reminder | required_escalation | digest | handoff | response_due
     kind: Mapped[str] = mapped_column(String(20), default="step")
     ref: Mapped[str] = mapped_column(String(100))  # id шага / опроса
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -182,6 +182,18 @@ class Ticket(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     employee: Mapped[Employee] = relationship(lazy="joined")
+
+
+class TicketDeadline(Base):
+    """Срок первого ответа HR по обращению и отметки уведомлений: каждое отправляется не больше одного раза."""
+
+    __tablename__ = "ticket_deadlines"
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), primary_key=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    urgent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # срочное — HR-руководителю
+    overdue_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # о просрочке — ему же
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # напоминание рекрутеру
+    reminder_delivered: Mapped[bool | None] = mapped_column()  # дошло ли оно в MAX; None — ещё отправляется
 
 
 class Document(Base):

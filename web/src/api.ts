@@ -12,8 +12,13 @@ export type ChatMessage = {
     button?: boolean
   }
   step_id: string | null
+  /** Плановое время шага от даты выхода — только в демо-чате панели: в MAX подпись не уходит. */
+  plan?: string | null
   created_at: string
 }
+
+/** Что выполнит перемотка в демо-чате: ближайший шаг и когда он по плану. */
+export type UpNext = { title: string; plan: string | null }
 
 export type Employee = {
   id: number
@@ -34,10 +39,23 @@ export type Employee = {
   survey: { id: string; q: number } | null
   in_dialog_with_hr: boolean
   signals?: number
+  /** Главная тревожная причина за 30 дней — видна напротив человека в списке. */
+  signal?: SupportReason | null
   open_ticket?: boolean
 }
 
-export type Signal = { flag: string; source: string; text: string; severity?: string; at: string }
+/** Причина тревоги простыми словами: откуда (опрос или сообщение), когда и срочно ли. Без ответа новичка. */
+export type SupportReason = { reason: string; source: string; at: string; urgent: boolean }
+export type SupportPerson = { employee_id: number; name: string; urgent: boolean; reasons: SupportReason[] }
+/** Карточка новичка: причины за 30 дней (today — есть ли за сутки) и можно ли подключить руководителя. */
+export type EmployeeSupport = {
+  reasons: SupportReason[]
+  today: boolean
+  manager: string | null
+  manager_in_max: boolean
+  refusal: string | null
+  options: { id: string; title: string; text: string }[]
+}
 
 export type Dashboard = {
   attention: {
@@ -61,7 +79,6 @@ export type Dashboard = {
   sentiment_weekly: { week: string; positive: number; neutral: number; negative: number }[]
   question_topics: { topic: string; count: number }[]
   knowledge_gaps: { question: string; count: number }[]
-  risk: { employee_id: number; name: string; site: string; stage: string; signals: Signal[]; high: boolean }[]
   scores: { topic: string; avg: number; n: number }[]
 }
 
@@ -76,7 +93,24 @@ export type Ticket = {
   employee: string
   site: string
   created_at: string
+  response?: TicketResponse
   messages?: ChatMessage[]
+}
+
+/** Срок первого ответа HR: ответственный рекрутер, срок в рабочих часах площадки и напоминания. */
+export type TicketResponse = {
+  recruiter: string | null
+  due_at: string
+  first_reply_at: string | null
+  overdue: boolean
+  reminded_at: string | null
+  reminder_delivered: boolean | null
+}
+
+export type ResponseTime = {
+  rules: { hours: number; urgent_hours: number }
+  first_reply: { median_min: number | null; tickets: number; days: number }
+  overdue: (Ticket & { response: TicketResponse })[]
 }
 
 export type Meta = {
@@ -210,7 +244,14 @@ export type AnalysisItem = {
   source: string
   at: string
 }
-export type Notification = { to?: string; text: string; delivered: boolean; at: string }
+/** request — рекомендация, которую HR выбрал для руководителя («Подключить руководителя»). */
+export type Notification = {
+  to?: string
+  text: string
+  delivered: boolean
+  request?: string | null
+  at: string
+}
 export type EmployeeCardData = {
   employee: Employee
   timeline: TimelineStep[]

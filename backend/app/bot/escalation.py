@@ -14,8 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels, llm
+from app.bot import response_time
 from app.bot.scenario import render
 from app.channels import ADMIN_FEED, Button, OutMessage, hub
+from app.db import after_commit
 from app.models import Employee, Job, Message, Ticket
 
 log = logging.getLogger(__name__)
@@ -70,7 +72,7 @@ async def _handoff(s: AsyncSession, emp: Employee, subject: str) -> Handoff:
 async def queue_ticket(
     s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium"
 ) -> Ticket:
-    """Добавить обращение и подготовку карточки в транзакцию вызывающего обработчика."""
+    """Добавить обращение, подготовку карточки и срок первого ответа в транзакцию вызывающего обработчика."""
     t = Ticket(
         employee_id=emp.id,
         kind=kind,
@@ -82,6 +84,7 @@ async def queue_ticket(
     await s.flush()
     # Без employee_id: подготовка резюме не должна удерживать блокировку диалога новичка.
     s.add(Job(kind="handoff", ref=str(t.id), run_at=datetime.now(ZoneInfo("UTC"))))
+    response_time.track(s, t, emp)
     return t
 
 
@@ -90,7 +93,9 @@ async def create_ticket(
 ) -> Ticket:
     t = await queue_ticket(s, emp, kind, subject, severity)
     await s.commit()
-    hub.publish(ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name})
+    after_commit(
+        s, hub.publish, ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name}
+    )
     return t
 
 
@@ -127,10 +132,29 @@ async def finalize(s: AsyncSession, ticket_id: int) -> None:
         if t is not None and t.status == "open":
             await channels.notify_staff(emp.recruiter, OutMessage(text=text), raise_errors=True)
         await s.commit()
-    hub.publish(ADMIN_FEED, {"type": "ticket_updated", "id": ticket_id})
+    after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_updated", "id": ticket_id})
 
 
 async def open_dialog(s: AsyncSession, emp: Employee, subject: str, kind: str = "problem") -> Ticket:
+    current = await s.get(Ticket, emp.state["ticket_id"]) if emp.state.get("ticket_id") else None
+    if current and current.status == "open":
+        # Повторное нажатие или новый вопрос при открытом диалоге: второе обращение и второе уведомление не нужны
+        emp.state = {k: v for k, v in emp.state.items() if k != "await"}
+        await s.commit()
+        if subject == current.subject:
+            text = "Уже передал — ответ придёт сюда же, в этот чат 🙌"
+        else:
+            await forward_from_employee(s, emp, subject)
+            text = "Добавил это в {твой|ваш} диалог с HR — ответ придёт сюда же, в этот чат 🙌"
+        await channels.send(
+            s,
+            emp,
+            OutMessage(
+                text=render(text, emp), buttons=[[Button("↩️ Вернуться к Корсику", payload="a:close_dialog")]]
+            ),
+            ticket_id=current.id,
+        )
+        return current
     t = await create_ticket(s, emp, kind, subject)
     emp.state = {**{k: v for k, v in emp.state.items() if k != "await"}, "ticket_id": t.id}
     await s.commit()
@@ -179,7 +203,7 @@ async def forward_from_employee(s: AsyncSession, emp: Employee, text: str) -> No
         await s.commit()
         return
     await channels.post_hr_chat(OutMessage(text=f"✉️ #{t.id} · {emp.full_name}:\n{text}"))
-    hub.publish(ADMIN_FEED, {"type": "ticket_message", "id": t.id})
+    after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_message", "id": t.id})
 
 
 async def hr_reply(s: AsyncSession, t: Ticket, text: str, author: str = "HR") -> None:
@@ -220,4 +244,4 @@ async def close(s: AsyncSession, t: Ticket, notify: bool = True) -> None:
                 )
             ),
         )
-    hub.publish(ADMIN_FEED, {"type": "ticket_closed", "id": t.id})
+    after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_closed", "id": t.id})

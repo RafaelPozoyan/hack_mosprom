@@ -15,9 +15,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import scheduler
-from app.analytics import digest, metrics
+from app.analytics import digest, metrics, support
 from app.analytics.sentiment import manager_topics
-from app.bot import backlog, escalation, progress
+from app.bot import backlog, escalation, progress, response_time
 from app.bot.progress import StepBlocked
 from app.bot.scenario import (
     add_months,
@@ -192,7 +192,12 @@ async def list_employees(s: AsyncSession = Depends(get_session)):
     signals = await metrics.risk_signals(s, datetime.now(ZoneInfo("UTC")) - timedelta(days=30))
     open_t = {r for r in await s.scalars(select(Ticket.employee_id).where(Ticket.status == "open"))}
     return [
-        {**employee_view(e), "signals": len(signals.get(e.id, [])), "open_ticket": e.id in open_t}
+        {
+            **employee_view(e),
+            "signals": len(signals.get(e.id, [])),
+            "signal": support.top_reason(signals.get(e.id, [])),  # главная причина — видна напротив человека
+            "open_ticket": e.id in open_t,
+        }
         for e in emps
     ]
 
@@ -469,8 +474,14 @@ async def manager_card(code: str, emp_id: int, s: AsyncSession = Depends(get_ses
         "employee": manager_view(e),
         "signals": topics,
         "upcoming": upcoming,
+        # request — название рекомендации, которую выбрал HR («Подключить руководителя»), без ответов новичка
         "notifications": [
-            {"text": n.text, "delivered": n.payload.get("delivered"), "at": n.created_at.isoformat()}
+            {
+                "text": n.text,
+                "delivered": n.payload.get("delivered"),
+                "request": n.payload.get("request"),
+                "at": n.created_at.isoformat(),
+            }
             for n in notes
         ],
     }
@@ -582,7 +593,25 @@ async def list_tickets(status: str | None = None, s: AsyncSession = Depends(get_
     q = select(Ticket).order_by(Ticket.id.desc())
     if status:
         q = q.where(Ticket.status == status)
-    return [ticket_view(t) for t in (await s.scalars(q)).all()]
+    tickets = (await s.scalars(q)).all()
+    responses = await response_time.views(s, tickets)
+    return [{**ticket_view(t), "response": responses[t.id]} for t in tickets]
+
+
+@router.get("/response-time")
+async def response_time_today(s: AsyncSession = Depends(get_session)):
+    """Экран «Сегодня»: обращения без ответа HR дольше срока (дольше всех ждущее — сверху) и время первого ответа."""
+    q = select(Ticket).where(Ticket.status == "open").order_by(Ticket.created_at, Ticket.id)
+    tickets = (await s.scalars(q)).all()
+    responses = await response_time.views(s, tickets)
+    rules = response_time.rules()
+    return {
+        "rules": {"hours": rules["hours"], "urgent_hours": rules["urgent_hours"]},
+        "first_reply": await response_time.first_reply(s),
+        "overdue": [
+            {**ticket_view(t), "response": responses[t.id]} for t in tickets if responses[t.id]["overdue"]
+        ],
+    }
 
 
 async def _ticket(s: AsyncSession, tid: int) -> Ticket:
@@ -618,7 +647,11 @@ async def get_ticket(tid: int, s: AsyncSession = Depends(get_session)):
             .limit(8)
         )
     ).all()
-    return {**ticket_view(t), "messages": [message_view(m) for m in [*reversed(before), *msgs]]}
+    return {
+        **ticket_view(t),
+        "response": (await response_time.views(s, [t]))[t.id],
+        "messages": [message_view(m) for m in [*reversed(before), *msgs]],
+    }
 
 
 class ReplyIn(BaseModel):
@@ -641,6 +674,16 @@ async def close_ticket(tid: int, s: AsyncSession = Depends(get_session)):
     t = await _ticket(s, tid)
     await escalation.close(s, t, notify=t.kind != "alert")
     return {"ok": True}
+
+
+@router.post("/tickets/{tid}/remind")
+async def remind_recruiter(tid: int, s: AsyncSession = Depends(get_session)):
+    """Кнопка «Напомнить рекрутеру» в блоке «Просрочено»."""
+    t = await _ticket(s, tid)
+    try:
+        return {"delivered": await response_time.remind(s, t)}
+    except response_time.ReminderError as e:
+        raise HTTPException(409, str(e)) from e
 
 
 # --- база знаний -------------------------------------------------------------------------------------
