@@ -165,17 +165,16 @@ function Questions({ d }: { d: D }) {
 }
 
 export default function Dashboard() {
-  const { data } = useQuery({
+  const { data, isError, refetch, isFetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get<D>('/api/dashboard'),
     refetchInterval: 15_000,
   })
-  if (!data) return null
-  const k = data.kpi
+  const k = data?.kpi
   // Доля в API округлена до процента; при числе вопросов меньше 100 число ответов восстанавливается из неё точно.
-  const answered = k.ai_resolved_pct != null ? Math.round((k.ai_resolved_pct * k.questions) / 100) : 0
-  const missed = k.questions - answered
-  const stages = data.stages.filter((s) => s.count > 0)
+  const answered = k?.ai_resolved_pct != null ? Math.round((k.ai_resolved_pct * k.questions) / 100) : 0
+  const missed = k ? k.questions - answered : 0
+  const stages = data?.stages.filter((s) => s.count > 0) ?? []
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -183,60 +182,77 @@ export default function Dashboard() {
 
       <WaitingTickets />
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Новички на адаптации" value={k.newcomers} />
-        <Stat
-          label="Корсик ответил сам"
-          value={
-            !k.questions
-              ? muted('вопросов пока не было')
-              : k.questions < 100
-                ? `${answered} из ${k.questions}`
-                : `${k.ai_resolved_pct}%`
-          }
-          hint={
-            !k.questions
-              ? undefined
-              : k.questions < 100
-                ? `${missed ? `на ${missed} не нашёл ответа · ` : ''}за 30 дней`
-                : `из ${k.questions} ${plural(k.questions, 'вопроса', 'вопросов', 'вопросов')} за 30 дней`
-          }
-          tone="lime"
-        />
-        <Stat
-          label="Ответы были полезны"
-          value={k.helpful_pct == null ? muted('оценок пока нет') : `${k.helpful_pct}%`}
-          hint={k.helpful_pct == null ? undefined : 'по оценкам новичков'}
-        />
-        <FirstReplyStat />
-      </div>
+      {k ? (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Новички на адаптации" value={k.newcomers} />
+          <Stat
+            label="Корсик ответил сам"
+            value={
+              !k.questions
+                ? muted('вопросов пока не было')
+                : k.questions < 100
+                  ? `${answered} из ${k.questions}`
+                  : `${k.ai_resolved_pct}%`
+            }
+            hint={
+              !k.questions
+                ? undefined
+                : k.questions < 100
+                  ? `${missed ? `на ${missed} не нашёл ответа · ` : ''}за 30 дней`
+                  : `из ${k.questions} ${plural(k.questions, 'вопроса', 'вопросов', 'вопросов')} за 30 дней`
+            }
+            tone="lime"
+          />
+          <Stat
+            label="Ответы были полезны"
+            value={k.helpful_pct == null ? muted('оценок пока нет') : `${k.helpful_pct}%`}
+            hint={k.helpful_pct == null ? undefined : 'по оценкам новичков'}
+          />
+          <FirstReplyStat />
+        </div>
+      ) : (
+        isError && (
+          <Card>
+            <Empty>
+              Не удалось загрузить показатели. Проверьте соединение.
+              <Btn small variant="ghost" onClick={() => refetch()} disabled={isFetching}>
+                Повторить
+              </Btn>
+            </Empty>
+          </Card>
+        )
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <SupportToday />
-        <Questions d={data} />
+        {data && <Questions d={data} />}
       </div>
 
-      <Card title="Настроение новичков" subtitle="По ответам новичков в опросах и чате">
-        <MoodWeek weeks={data.sentiment_weekly} />
-      </Card>
+      {data && (
+        <Card title="Настроение новичков" subtitle="По ответам новичков в опросах и чате">
+          <MoodWeek weeks={data.sentiment_weekly} />
+        </Card>
+      )}
 
-      <Card>
-        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
-          <h2 className="text-[15px] font-semibold">Где сейчас новички</h2>
-          {stages.length ? (
-            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink/70">
-              {stages.map((s) => (
-                <span key={s.stage}>
-                  <span className="inline-block first-letter:uppercase">{s.stage}</span>{' '}
-                  <span className="font-semibold text-ink tabular-nums">{s.count}</span>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span className="text-sm text-ink/50">Новичков пока нет</span>
-          )}
-        </div>
-      </Card>
+      {data && (
+        <Card>
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+            <h2 className="text-[15px] font-semibold">Где сейчас новички</h2>
+            {stages.length ? (
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-ink/70">
+                {stages.map((s) => (
+                  <span key={s.stage}>
+                    <span className="inline-block first-letter:uppercase">{s.stage}</span>{' '}
+                    <span className="font-semibold text-ink tabular-nums">{s.count}</span>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-sm text-ink/50">Новичков пока нет</span>
+            )}
+          </div>
+        </Card>
+      )}
     </div>
   )
 }
