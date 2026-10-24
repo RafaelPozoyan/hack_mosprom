@@ -11,7 +11,7 @@ export default function Tickets() {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const [status, setStatus] = useState<'open' | 'closed'>('open')
-  const { data: list = [] } = useQuery({
+  const { data: list = [], isPending } = useQuery({
     queryKey: ['tickets', status],
     queryFn: () => api.get<Ticket[]>(`/api/tickets?status=${status}`),
     refetchInterval: 10_000,
@@ -30,7 +30,8 @@ export default function Tickets() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
       <h1 className="text-2xl font-semibold tracking-tight">Обращения новичков</h1>
-      <div className={clsx('grid gap-5', selected && 'lg:grid-cols-[360px_1fr]')}>
+      {/* Пока список грузится, колонка справа уже на месте — иначе страница дёргается */}
+      <div className={clsx('grid gap-5', (selected || isPending) && 'lg:grid-cols-[360px_1fr]')}>
         <Card
           action={
             <div className="flex rounded-xl bg-ink/[0.05] p-0.5 text-[13px]">
@@ -45,12 +46,14 @@ export default function Tickets() {
               ))}
             </div>
           }
-          title={status === 'open' ? `Ждут ответа: ${list.length}` : 'Решённые'}
+          title={status === 'open' ? `Ждут ответа${isPending ? '' : `: ${list.length}`}` : 'Решённые'}
         >
           {list.length === 0 ? (
-            <Empty icon={<CheckCircle2 className="text-lime-2" />}>
-              {status === 'open' ? 'Все обращения разобраны' : 'Здесь будут закрытые обращения'}
-            </Empty>
+            !isPending && (
+              <Empty icon={<CheckCircle2 className="text-lime-2" />}>
+                {status === 'open' ? 'Все обращения разобраны' : 'Здесь будут закрытые обращения'}
+              </Empty>
+            )
           ) : (
             <div className="-mx-2 flex flex-col">
               {list.map((t) => (

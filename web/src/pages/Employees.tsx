@@ -63,7 +63,7 @@ const urgency = (e: Employee) => (e.signal ? (e.signal.urgent ? 4 : 1) : 0) + (e
 export default function Employees() {
   const qc = useQueryClient()
   const nav = useNavigate()
-  const { data: emps = [] } = useQuery({
+  const { data: emps = [], isPending } = useQuery({
     queryKey: ['employees'],
     queryFn: () => api.get<Employee[]>('/api/employees'),
     refetchInterval: 15_000,
@@ -119,13 +119,15 @@ export default function Employees() {
           </div>
         )}
         {list.length === 0 ? (
-          <Empty icon={emps.length === 0 ? <UserPlus className="text-ink/30" /> : undefined}>
-            {emps.length === 0
-              ? 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'
-              : q.trim()
-                ? NOBODY.all
-                : NOBODY[filter]}
-          </Empty>
+          !isPending && (
+            <Empty icon={emps.length === 0 ? <UserPlus className="text-ink/30" /> : undefined}>
+              {emps.length === 0
+                ? 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'
+                : q.trim()
+                  ? NOBODY.all
+                  : NOBODY[filter]}
+            </Empty>
+          )
         ) : (
           <table className="w-full table-fixed text-sm">
             <thead className="text-left text-xs text-ink/45">
