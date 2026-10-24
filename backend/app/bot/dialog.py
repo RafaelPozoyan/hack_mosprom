@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
 from app.analytics.sentiment import analyze_later
-from app.bot import escalation, followup, progress, surveys
+from app.bot import escalation, followup, progress, survey_input, surveys
 from app.bot.scenario import (
     button_rows,
     find_button,
@@ -65,13 +65,13 @@ async def on_start(s: AsyncSession, emp: Employee) -> None:
 async def on_text(s: AsyncSession, emp: Employee, text: str) -> None:
     if not text:
         return
-    await channels.log_incoming(s, emp, text)
+    incoming = await channels.log_incoming(s, emp, text)
     if text.startswith("/"):
         await command(s, emp, text[1:].split()[0].lower())
         return
     aw = (emp.state.get("await") or {}).get("kind")
     if aw in ("survey_comment", "survey_text"):
-        await surveys.comment(s, emp, text)
+        await survey_input.propose(s, emp, incoming)
     elif aw == "relay":
         await escalation.open_dialog(s, emp, text)
     elif aw == "self_intro":
@@ -152,13 +152,18 @@ async def on_callback(s: AsyncSession, emp: Employee, ev: InEvent) -> None:
     kind, _, rest = p.partition(":")
     if kind == "b":
         await scenario_button(s, emp, p)
-    elif kind == "s":
-        sid, qid, val = rest.split(":")
-        await surveys.answer(s, emp, sid, qid, val)
-    elif kind == "m":
-        sid, qid, opt = rest.split(":")
-        msg = await find_message(s, emp, ev.message_mid)
-        await surveys.toggle(s, emp, sid, qid, opt, msg)
+    elif kind in ("s", "m"):
+        parts = rest.split(":")
+        current = emp.state.get("survey") or {}
+        if len(parts) != 4 or not current.get("key") or parts[2] != current["key"]:
+            await surveys.stale_button(s, emp)
+            return
+        sid, qid, _, value = parts
+        if kind == "s":
+            await surveys.answer(s, emp, sid, qid, value)
+        else:
+            msg = await find_message(s, emp, ev.message_mid)
+            await surveys.toggle(s, emp, sid, qid, value, msg)
     elif kind == "f":
         qid, val = rest.split(":")
         q = await s.get(Question, int(qid))
@@ -245,7 +250,9 @@ async def action(s: AsyncSession, emp: Employee, act: str) -> None:
         await s.commit()
         await send_menu(s, emp, intro="Хорошо, отменил. ")
     elif name == "skip_comment":
-        await surveys.comment(s, emp, None)
+        await survey_input.skip(s, emp, arg)
+    elif name in ("confirm_comment", "question_comment"):
+        await survey_input.confirm(s, emp, arg, as_question=name == "question_comment")
     elif name == "resume":
         await surveys.resume(s, emp)
     elif name == "required":

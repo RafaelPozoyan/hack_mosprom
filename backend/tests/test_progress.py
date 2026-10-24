@@ -177,7 +177,7 @@ async def test_optional_answers_are_preserved_when_next_survey_starts(db):
         answer_count = len(list(await s.scalars(select(SurveyAnswer))))
         await scenario.run_step(s, emp, "w2_check")
         last = await s.scalar(select(Message).order_by(Message.id.desc()).limit(1))
-        assert last.payload["buttons"][0][0]["payload"] == "a:skip_comment"
+        assert last.payload["buttons"][0][0]["payload"] == f"a:skip_comment:{emp.state['await']['answer_id']}"
         assert len(list(await s.scalars(select(SurveyAnswer)))) == answer_count
         await surveys.comment(s, emp, None)  # объяснять причину отрицательного ответа необязательно
         assert emp.state["survey"]["q"] == 1
@@ -596,3 +596,148 @@ async def test_demo_fast_forwards_required_reminders_and_escalation(db, monkeypa
         )
         assert reminders == 2
         assert await s.scalar(select(func.count()).select_from(Ticket)) == 1
+
+
+async def last_button(s):
+    message = await s.scalar(select(Message).order_by(Message.id.desc()).limit(1))
+    return message.payload["buttons"][0][0]["payload"]
+
+
+@pytest.mark.asyncio
+async def test_previous_comment_skip_cannot_advance_new_question(db):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await scenario.run_step(s, emp, "w2_check")
+        await surveys.answer(s, emp, "week2", "tasks_clear", "no")
+        old_skip = await last_button(s)
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=old_skip))
+        qid = surveys.questions(emp, "week2")[1]["id"]
+        await surveys.answer(s, emp, "week2", qid, "no")
+        current_skip = await last_button(s)
+        waiting = dict(emp.state["await"])
+        for payload in (old_skip, "a:skip_comment"):
+            await dialog.on_callback(s, emp, channels.InEvent("callback", payload=payload))
+            assert emp.state["survey"]["q"] == 1 and emp.state["await"] == waiting
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=current_skip))
+        assert emp.state["survey"]["q"] == 2
+
+
+@pytest.mark.asyncio
+async def test_old_survey_buttons_cannot_change_restarted_same_survey(db):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await surveys.start(s, emp, "day3")
+        old = await last_button(s)
+        await surveys.start(s, emp, "day3")
+        current = await last_button(s)
+        assert old != current
+        for payload in (old, "s:day3:docs:a"):
+            await dialog.on_callback(s, emp, channels.InEvent("callback", payload=payload))
+            assert emp.state["survey"]["q"] == 0
+        assert len(list(await s.scalars(select(SurveyAnswer)))) == 0
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=current))
+        assert emp.state["survey"]["q"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", ["ty", "vy"])
+async def test_text_needs_confirmation_and_survives_new_session(db, monkeypatch, form):
+    monkeypatch.setattr(surveys, "analyze_later", lambda *args, **kwargs: None)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.address_form = form
+        await scenario.run_step(s, emp, "w2_check")
+        await surveys.answer(s, emp, "week2", "tasks_clear", "no")
+        answer_id = emp.state["await"]["answer_id"]
+        await dialog.on_text(s, emp, "Нужен пример задачи")
+        confirm = await last_button(s)
+        assert emp.state["survey"]["q"] == 0
+        assert (await s.get(SurveyAnswer, answer_id)).comment is None
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=confirm))
+        assert (await s.get(SurveyAnswer, answer_id)).comment == "Нужен пример задачи"
+        assert emp.state["survey"]["q"] == 1
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=confirm))
+        assert emp.state["survey"]["q"] == 1
+
+
+@pytest.mark.asyncio
+async def test_replaced_text_and_old_confirmation_cannot_change_current_answer(db, monkeypatch):
+    monkeypatch.setattr(surveys, "analyze_later", lambda *args, **kwargs: None)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await scenario.run_step(s, emp, "w2_check")
+        await surveys.answer(s, emp, "week2", "tasks_clear", "no")
+        answer_id = emp.state["await"]["answer_id"]
+        await dialog.on_text(s, emp, "Первое сообщение")
+        old = await last_button(s)
+        await dialog.on_text(s, emp, "Уточнённый ответ")
+        current = await last_button(s)
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=old))
+        assert emp.state["survey"]["q"] == 0
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=current))
+        assert (await s.get(SurveyAnswer, answer_id)).comment == "Уточнённый ответ"
+        qid = surveys.questions(emp, "week2")[1]["id"]
+        await surveys.answer(s, emp, "week2", qid, "no")
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=current))
+        assert emp.state["survey"]["q"] == 1
+
+
+@pytest.mark.asyncio
+async def test_separate_question_does_not_become_survey_answer(db, monkeypatch):
+    answer = AsyncMock()
+    monkeypatch.setattr(dialog, "answer_question", answer)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await scenario.run_step(s, emp, "w2_check")
+        await surveys.answer(s, emp, "week2", "tasks_clear", "no")
+        answer_id = emp.state["await"]["answer_id"]
+        await dialog.on_text(s, emp, "Где можно пообедать?")
+        message = await s.scalar(select(Message).order_by(Message.id.desc()).limit(1))
+        payload = message.payload["buttons"][1][0]["payload"]
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=payload))
+        answer.assert_awaited_once_with(s, emp, "Где можно пообедать?")
+        assert emp.state["survey"]["q"] == 0
+        assert (await s.get(SurveyAnswer, answer_id)).comment is None
+        assert "candidate_id" not in emp.state["await"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip_answer", [False, True])
+async def test_open_text_answer_is_confirmed_or_explicitly_skipped(db, monkeypatch, skip_answer):
+    monkeypatch.setattr(surveys, "analyze_later", lambda *args, **kwargs: None)
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        definition = scenario.scenario()["surveys"]["final"]
+        index = next(i for i, q in enumerate(definition["questions"]) if q["type"] == "text")
+        emp.state = {"survey": {"id": "final", "q": index, "selected": []}}
+        await surveys.resume(s, emp)
+        skip = await last_button(s)
+        await dialog.on_text(s, emp, "Хороший наставник")
+        confirm = await last_button(s)
+        assert len(list(await s.scalars(select(SurveyAnswer)))) == 0
+        if skip_answer:
+            await dialog.on_callback(s, emp, channels.InEvent("callback", payload=skip))
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=confirm))
+        answers = list(await s.scalars(select(SurveyAnswer)))
+        assert len(answers) == 1
+        assert answers[0].value == {"text": None if skip_answer else "Хороший наставник"}
+
+
+@pytest.mark.asyncio
+async def test_multi_choice_rejects_old_generation_and_resume_keeps_current(db):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        await surveys.start(s, emp, "month2")
+        await surveys.answer(s, emp, "month2", "mood", "a")
+        old = await last_button(s)
+        await surveys.start(s, emp, "month2")
+        await surveys.answer(s, emp, "month2", "mood", "a")
+        current = await last_button(s)
+        await surveys.resume(s, emp)
+        assert await last_button(s) == current
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=old))
+        assert emp.state["survey"]["selected"] == []
+        await dialog.on_callback(s, emp, channels.InEvent("callback", payload=current))
+        assert len(emp.state["survey"]["selected"]) == 1

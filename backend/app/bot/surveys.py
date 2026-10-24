@@ -1,6 +1,7 @@
 """Опросы из ТЗ: выбор, да/нет, шкала 1–10 с комментарием ниже порога, множественный выбор, открытый ответ."""
 
 from datetime import datetime, timedelta
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import update
@@ -44,7 +45,8 @@ def offer_buttons(emp: Employee, offer: list[str]) -> list[list[Button]]:
 
 
 def question_message(emp: Employee, survey_id: str, q: dict, selected: list[str] | None = None) -> OutMessage:
-    prefix = f"s:{survey_id}:{q['id']}"
+    key = emp.state["survey"]["key"]
+    prefix = f"s:{survey_id}:{q['id']}:{key}"
     text = render(q["text"], emp)
     kind = q["type"]
     if kind == "choice":
@@ -57,7 +59,7 @@ def question_message(emp: Employee, survey_id: str, q: dict, selected: list[str]
     elif kind == "multi":
         selected = selected or []
         rows = [
-            [Button(("✅ " if o["id"] in selected else "") + render(o["text"], emp), payload=f"m:{survey_id}:{q['id']}:{o['id']}")]
+            [Button(("✅ " if o["id"] in selected else "") + render(o["text"], emp), payload=f"m:{survey_id}:{q['id']}:{key}:{o['id']}")]
             for o in options(emp, q)
         ]
         rows.append([Button("Готово ➡️", payload=f"{prefix}:done")])
@@ -69,7 +71,7 @@ def question_message(emp: Employee, survey_id: str, q: dict, selected: list[str]
 async def start(s: AsyncSession, emp: Employee, survey_id: str) -> None:
     # недописанный комментарий к прошлому опросу не должен перехватывать ответы нового
     state = {k: v for k, v in emp.state.items() if not (k == "await" and v.get("kind") in ("survey_comment", "survey_text"))}
-    emp.state = {**state, "survey": {"id": survey_id, "q": 0, "selected": []}}
+    emp.state = {**state, "survey": {"id": survey_id, "q": 0, "selected": [], "key": uuid4().hex}}
     await s.commit()
     await _ask(s, emp)
     now = datetime.now(ZoneInfo("UTC"))
@@ -82,6 +84,10 @@ async def start(s: AsyncSession, emp: Employee, survey_id: str) -> None:
 
 async def _ask(s: AsyncSession, emp: Employee) -> None:
     st = emp.state["survey"]
+    if not st.get("key"):
+        st = {**st, "key": uuid4().hex}
+        emp.state = {**emp.state, "survey": st}
+        await s.commit()
     q = questions(emp, st["id"])[st["q"]]
     if q["type"] == "text":
         emp.state = {**emp.state, "await": {"kind": "survey_text"}}
@@ -161,7 +167,7 @@ async def answer(s: AsyncSession, emp: Employee, survey_id: str, qid: str, raw: 
     if ask:
         emp.state = {**emp.state, "await": {"kind": "survey_comment", "answer_id": ans.id, "qid": qid, "offer": offer}}
         await s.commit()
-        await channels.send(s, emp, OutMessage(text=render(ask, emp), buttons=[[Button(SKIP, payload="a:skip_comment")]]))
+        await channels.send(s, emp, OutMessage(text=render(ask, emp), buttons=[[Button(SKIP, payload=f"a:skip_comment:{ans.id}")]]))
         return
     if reply or offer:
         await channels.send(s, emp, OutMessage(text=render(reply or "Понял {тебя|вас}!", emp), buttons=offer_buttons(emp, offer)))
@@ -256,8 +262,15 @@ async def resume(s: AsyncSession, emp: Employee) -> None:
     if (emp.state.get("await") or {}).get("kind") == "survey_comment":
         await channels.send(s, emp, OutMessage(
             text=render(COMMENT_PROMPT, emp),
-            buttons=[[Button(SKIP, payload="a:skip_comment")]],
+            buttons=[[Button(SKIP, payload=f"a:skip_comment:{emp.state['await']['answer_id']}")]],
         ))
         return
     await _ask(s, emp)
+
+
+async def stale_button(s: AsyncSession, emp: Employee) -> None:
+    await channels.send(s, emp, OutMessage(
+        text="Эта кнопка относится к предыдущему вопросу. Текущий ответ не изменён.",
+        buttons=[[Button("К текущему вопросу ➡️", payload="a:resume")]] if emp.state.get("survey") else [],
+    ))
 
