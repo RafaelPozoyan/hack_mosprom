@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowLeft, BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
 import { Link, Route, Routes, useParams } from 'react-router'
 import { api, fmtDateTime, type ManagerCardData, type ManagerHome, type Meta } from '../api'
-import { Avatar, Card, Empty, KorsikMark, siteName, timeAgo } from '../components/ui'
+import { Avatar, Card, Empty, KorsikMark, siteName, timeAgo, useDemo } from '../components/ui'
 import { StageCell } from './Employees'
 
 // Руководитель видит прогресс и рекомендации по своим новичкам. Фильтрует сервер (/api/m/<код>): свободные ответы
@@ -169,6 +169,7 @@ export function ManagerCard({ code, base }: { code: string; base: string }) {
 
 /** Роль «Руководитель» в панели HR: тот же экран и тот же ответ сервера, что по личной ссылке руководителя. */
 export default function ManagerPreview({ card = false }: { card?: boolean }) {
+  const demo = useDemo()
   const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
   const code = meta?.staff.find((s) => s.role === 'manager')?.code
   if (!meta) return null
@@ -182,12 +183,14 @@ export default function ManagerPreview({ card = false }: { card?: boolean }) {
   return (
     <>
       {card ? <ManagerCard code={code} base="/my" /> : <ManagerView code={code} base="/my" />}
-      <p className="mx-auto mt-5 max-w-4xl text-xs text-ink/45">
-        Руководитель открывает этот экран по личной ссылке:{' '}
-        <a href={link} target="_blank" rel="noreferrer" className="underline">
-          {link}
-        </a>
-      </p>
+      {demo && (
+        <p className="mx-auto mt-5 max-w-4xl text-xs text-ink/45">
+          Руководитель открывает этот экран по личной ссылке:{' '}
+          <a href={link} target="_blank" rel="noreferrer" className="underline">
+            {link}
+          </a>
+        </p>
+      )}
     </>
   )
 }
