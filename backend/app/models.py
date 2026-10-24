@@ -228,4 +228,7 @@ class MaxUpdate(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(String(200))
 
-    __table_args__ = (Index("ix_max_updates_actor", "actor", "status", "id"),)
+    __table_args__ = (
+        Index("ix_max_updates_due", "status", "available_at"),
+        Index("ix_max_updates_actor", "actor", "status", "id"),
+    )
