@@ -131,7 +131,9 @@ export default function EmployeeCard() {
           ]}
         />
 
-        {tab === 'journey' && <Journey steps={data.timeline} empId={e.id} onDone={refresh} />}
+        {tab === 'journey' && (
+          <Journey steps={data.timeline} empId={e.id} active={e.status === 'active'} onDone={refresh} />
+        )}
         {tab === 'surveys' && <Surveys data={data} />}
         {tab === 'signals' && <Signals data={data} />}
         {tab === 'tickets' && <TicketsTab data={data} />}
@@ -410,14 +412,26 @@ const skipped = (t: TimelineStep) => t.status === 'skipped' || t.status === 'can
 const byPhase = (steps: TimelineStep[]) =>
   PHASES.map((p) => ({ phase: p, items: steps.filter((s) => s.phase === p) })).filter((g) => g.items.length)
 
-function Journey({ steps, empId, onDone }: { steps: TimelineStep[]; empId: number; onDone: () => void }) {
+function Journey({
+  steps,
+  empId,
+  active,
+  onDone,
+}: {
+  steps: TimelineStep[]
+  empId: number
+  active: boolean
+  onDone: () => void
+}) {
   const done = steps.filter(passed)
   const missed = done.filter(skipped).length
   const ahead = byPhase(steps.filter((s) => !passed(s)))
   const later = ahead.slice(2).flatMap((g) => g.items) // открыты текущий этап и следующий, дальние — свёрнуты
   const last = later.at(-1)?.run_at
   const waiting = steps.find((s) => s.status === 'waiting')
-  const step = (t: TimelineStep) => <Step key={t.step_id} t={t} empId={empId} onDone={onDone} />
+  const step = (t: TimelineStep) => (
+    <Step key={t.step_id} t={t} empId={empId} active={active} onDone={onDone} />
+  )
   return (
     <div className="flex flex-col gap-4">
       {waiting && (
@@ -492,16 +506,28 @@ function Fold({
   )
 }
 
-function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: () => void }) {
+/** Строка шага. Кнопки, которые сейчас не нужны, видны при наведении: демо-перемотка и отправка шага
+ *  «по вашей команде» раньше срока. Шаг, которого HR ждёт сейчас, отправляют из блока «Нужно ваше действие». */
+function Step({
+  t,
+  empId,
+  active,
+  onDone,
+}: {
+  t: TimelineStep
+  empId: number
+  active: boolean
+  onDone: () => void
+}) {
   const demo = useDemo()
   const { run, busy, error } = useRunStep(empId, t, onDone)
   const st = STATUS[t.status] ?? STATUS.pending
   const Icon = st.icon
-  const sent = t.status === 'sent' || t.status === 'done'
-  const obsolete = t.status === 'skipped' && Boolean(t.status_note)
   const hr = awaitsHr(t)
+  const early = !!t.run_at && Date.parse(t.run_at) > Date.now()
+  const onHover = 'opacity-0 transition group-hover:opacity-100 focus-within:opacity-100'
   return (
-    <li className="flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
+    <li className="group flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
       <Icon size={18} className={clsx('mt-0.5 shrink-0', st.cls)} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -518,18 +544,20 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
         )}
       </div>
       <div className="flex shrink-0 items-center gap-3">
-        {t.manual && !sent && !obsolete && !hr && (
-          <span className="flex gap-2">
+        {active && t.manual && !passed(t) && !hr && (
+          <span className={clsx('flex gap-2', early && onHover)}>
             {t.step_id === 'd3_plan' && <AttachPlan small run={run} busy={busy} variant="ghost" />}
             <Btn small onClick={() => run()} disabled={busy}>
               Отправить
             </Btn>
           </span>
         )}
-        {demo && !t.manual && !sent && !obsolete && (
-          <Btn small demo onClick={() => run()} disabled={busy}>
-            <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
-          </Btn>
+        {demo && !t.manual && !passed(t) && (
+          <span className={onHover}>
+            <Btn small demo onClick={() => run()} disabled={busy}>
+              <Play size={12} /> {t.status === 'waiting' ? 'Продолжить' : 'сейчас'}
+            </Btn>
+          </span>
         )}
         <div className="text-right text-xs">
           <div className={hr ? WAIT.text : (st.text ?? 'text-ink/50')}>
