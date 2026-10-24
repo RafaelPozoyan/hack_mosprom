@@ -8,7 +8,7 @@ type Step = Meta['steps'][number]
 
 const when = (at: Step['at']) => {
   if (!at) return ''
-  if (at.event) return 'сразу после запуска по QR'
+  if (at.event) return 'сразу, как новичок откроет приглашение'
   const t = at.time ? `, ${at.time}` : ''
   if (at.day !== undefined) return `за ${Math.abs(Number(at.day))} дн. до выхода${t}`
   if (at.workday !== undefined) return `${at.workday}-й рабочий день${t}`
@@ -104,8 +104,8 @@ export default function Scenario() {
           <Card title="В любой момент">
             <ul className="flex flex-col gap-2 text-sm text-ink/70">
               <li>Отвечает на вопросы по документам базы знаний</li>
-              <li>/food — где пообедать</li>
-              <li>/hr — написать HR через Корсика</li>
+              <li>Где пообедать — команда /food</li>
+              <li>Написать HR через Корсика — команда /hr</li>
               <li>Сложный вопрос — передаёт живому HR в том же чате</li>
             </ul>
           </Card>
