@@ -67,11 +67,12 @@ async def messages(emp_id: int, s: AsyncSession = Depends(get_session)):
 async def run_next(emp_id: int, s: AsyncSession = Depends(get_session)):
     """Перемотка: выполнить ближайший запланированный шаг таймлайна прямо сейчас."""
     j = await s.scalar(
-        select(Job).where(Job.employee_id == emp_id, Job.status == "pending", Job.kind.in_(["step", "reminder"])).order_by(Job.run_at).limit(1)
+        select(Job).where(Job.employee_id == emp_id, Job.status.in_(["pending", "running"]), Job.kind.in_(["step", "reminder"])).order_by(Job.run_at, Job.id).limit(1).with_for_update()
     )
     if not j:
         return {"ok": False, "step": None}
-    j.status, j.attempts = "running", j.attempts + 1
+    # Запрос перемотки сохраняется до запуска фоновой задачи; попытку считает владелец блокировки.
+    j.status = "running"
     await s.commit()
     asyncio.create_task(run_job(j.id))
     return {"ok": True, "step": j.ref, "run_at": j.run_at.isoformat()}
