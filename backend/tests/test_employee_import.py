@@ -1,5 +1,6 @@
 """Новички из файла и API кадровой системы: разбор строк, ключ — табельный номер, перенос даты выхода."""
 
+import asyncio
 import io
 import os
 from datetime import date, datetime, timedelta
@@ -69,7 +70,7 @@ def test_csv_from_1c_in_windows_1251():
     raw = "Таб. №;ФИО;Площадка;Дата приёма\n000123;Петрова Мария;Офис «Лужники»;02.11.2026 0:00:00\n"
     rows = hr_import.read_file("export.csv", raw.encode("cp1251"))
     plan = hr_import.check_rows(rows, SITES, [], {}, TODAY)[0]
-    assert plan.status == "new" and plan.personnel_number == "000123"
+    assert plan.status == "new" and plan.personnel_number == "123"  # без ведущих нулей, как после Excel
     assert plan.site_code == "Luzhniki" and plan.start_date == date(2026, 11, 2)
 
 
@@ -189,7 +190,8 @@ async def test_same_file_twice_creates_no_duplicates(db):
     assert again == {"new": 0, "update": 0, "unchanged": 10, "error": 0}
     assert await count(db, Employee) == 10 and await count(db, Job) == jobs
     async with db.session() as s:
-        emp = await s.scalar(select(Employee).where(Employee.personnel_number == "000001"))
+        # табельный хранится без ведущих нулей: Excel всё равно превращает «000001» в число 1
+        emp = await s.scalar(select(Employee).where(Employee.personnel_number == "1"))
         assert emp.first_name == "Анна" and emp.manager.name == "Игорь Волков" and emp.status == "invited"
 
 
@@ -262,3 +264,174 @@ async def test_template_headers_are_recognized(db):
     assert template.status_code == 200
     with pytest.raises(hr_import.FileProblem, match="нет строк"):
         hr_import.read_file("Шаблон.xlsx", template.content)
+
+
+# --- ошибки выгрузки и параллельные загрузки ----------------------------------------------------------
+
+
+def test_impossible_dates_and_too_long_values_are_row_errors():
+    long = {"position": "Д" * 201, "department": "О" * 201}
+    rows = [
+        row(2, "1", "Иванова Анна", "GTP", "01.01.0001"),  # так 1С выгружает пустую дату
+        row(3, "2", "Петров Пётр", "GTP", "31.12.9999"),
+        row(4, "3" * 51, "Я" * 201, "GTP", "02.11.2026"),
+        (5, {**row(5, "4", "Сидорова Анна", "GTP", "02.11.2026")[1], **long}),
+        row(6, "5", "Орлова " + "Н" * 101, "GTP", "02.11.2026"),
+    ]
+    empty, far, number_and_name, position, first_name = hr_import.check_rows(rows, SITES, [], {}, TODAY)
+    assert empty.status == far.status == "error" and empty.start_date is None
+    assert "01.01.0001" in empty.errors[0] and "31.12.9999" in far.errors[0]
+    assert number_and_name.errors == ["Табельный номер длиннее 50 символов.", "ФИО длиннее 200 символов."]
+    assert position.errors == ["Должность длиннее 200 символов.", "Подразделение длиннее 200 символов."]
+    assert first_name.errors == ["Имя длиннее 100 символов."]
+
+
+def test_leading_zeros_do_not_make_another_person():
+    rows = [
+        row(2, "000501", "Иванова Анна", "GTP", "02.11.2026"),
+        row(3, 501.0, "Иванова Анна", "GTP", "02.11.2026"),
+    ]
+    first, second = hr_import.check_rows(rows, SITES, [], {}, TODAY)
+    assert first.personnel_number == "501" and first.status == "new"
+    assert second.status == "error" and "строке 2" in second.errors[0]
+
+
+@pytest.mark.asyncio
+async def test_number_without_zeros_finds_saved_newcomer(db, monkeypatch):
+    monkeypatch.setattr(settings(), "hr_api_key", "test-key")
+    headers = {"Authorization": "Bearer test-key"}
+    async with db.session() as s:  # запись до нормализации: номер сохранён с нулями
+        s.add(
+            Employee(
+                full_name="Демо Олег Орлов",
+                first_name="Олег",
+                site_code="GTP",
+                start_date=START,
+                probation_end=START + timedelta(days=90),
+                invite_code="old",
+                personnel_number="000777",
+            )
+        )
+        await s.commit()
+    batch = [
+        {
+            "personnel_number": "000501",
+            "full_name": "Демо Анна Иванова",
+            "site": "GTP",
+            "start_date": START.isoformat(),
+        },
+        {
+            "personnel_number": 777,
+            "full_name": "Демо Олег Орлов",
+            "site": "GTP",
+            "start_date": START.isoformat(),
+        },
+    ]
+    first = (
+        await call(db, "POST", "/api/hr-system/employees", json={"employees": batch}, headers=headers)
+    ).json()
+    assert [r["status"] for r in first["results"]] == ["new", "unchanged"]
+    batch[0]["personnel_number"] = 501  # та же строка после Excel: ведущие нули пропали
+    again = (
+        await call(db, "POST", "/api/hr-system/employees", json={"employees": batch}, headers=headers)
+    ).json()
+    assert again["counts"]["unchanged"] == 2 and await count(db, Employee) == 2
+    async with db.session() as s:
+        assert await s.scalar(select(Employee.id).where(Employee.personnel_number == "501"))
+
+
+@pytest.mark.asyncio
+async def test_bad_date_and_empty_optional_fields_do_not_break_batch(db, monkeypatch):
+    monkeypatch.setattr(settings(), "hr_api_key", "test-key")
+    headers = {"Authorization": "Bearer test-key"}
+    batch = [
+        {
+            "personnel_number": "1",
+            "full_name": "Демо Анна Иванова",
+            "site": "GTP",
+            "start_date": START.isoformat(),
+            "position": None,
+            "department": None,
+            "manager": None,
+            "recruiter": None,
+        },
+        {"personnel_number": "2", "full_name": "Демо Пётр Петров", "site": "GTP", "start_date": "01.01.0001"},
+    ]
+    response = await call(db, "POST", "/api/hr-system/employees", json={"employees": batch}, headers=headers)
+    assert response.status_code == 200
+    assert response.json()["counts"] == {"new": 1, "update": 0, "unchanged": 0, "error": 1}
+    assert await count(db, Employee) == 1
+
+
+@pytest.mark.asyncio
+async def test_newcomer_is_saved_only_together_with_plan(db, monkeypatch):
+    monkeypatch.setattr(settings(), "hr_api_key", "test-key")
+
+    async def broken(s, emp):
+        raise RuntimeError("план не построился")
+
+    monkeypatch.setattr(hr_import, "schedule_employee", broken)
+    record = {
+        "personnel_number": "1",
+        "full_name": "Демо Анна Иванова",
+        "site": "GTP",
+        "start_date": START.isoformat(),
+    }
+    with pytest.raises(RuntimeError):
+        await call(
+            db,
+            "POST",
+            "/api/hr-system/employees",
+            json={"employees": [record]},
+            headers={"Authorization": "Bearer test-key"},
+        )
+    assert (
+        await count(db, Employee) == 0
+    )  # повторная загрузка создаст новичка заново, а не скажет «без изменений»
+
+
+@pytest.mark.asyncio
+async def test_parallel_batches_replan_newcomer_one_after_another(db, monkeypatch):
+    monkeypatch.setattr(settings(), "hr_api_key", "test-key")
+    headers = {"Authorization": "Bearer test-key"}
+    record = {
+        "personnel_number": "1",
+        "full_name": "Демо Анна Иванова",
+        "site": "GTP",
+        "start_date": START.isoformat(),
+    }
+    await call(db, "POST", "/api/hr-system/employees", json={"employees": [record]}, headers=headers)
+    real, order = hr_import.schedule_employee, []
+
+    async def tracked(s, emp):
+        order.append("start")
+        await asyncio.sleep(
+            0.3
+        )  # второй пакет успел бы начать своё перепланирование, если бы его ничто не держало
+        await real(s, emp)
+        order.append("end")
+
+    monkeypatch.setattr(hr_import, "schedule_employee", tracked)
+    real_apply, arrived, both = hr_import.apply, [], asyncio.Event()
+
+    async def apply_together(s, plans):  # оба пакета успели проверить записи до того, как любой начал запись
+        arrived.append(plans)
+        if len(arrived) == 2:
+            both.set()
+        await asyncio.wait_for(both.wait(), 5)
+        await real_apply(s, plans)
+
+    monkeypatch.setattr(hr_import, "apply", apply_together)
+    later = START + timedelta(days=7)
+    moved = {"employees": [{**record, "start_date": later.isoformat()}]}
+    replies = await asyncio.gather(
+        *(call(db, "POST", "/api/hr-system/employees", json=moved, headers=headers) for _ in range(2))
+    )
+    assert [r.status_code for r in replies] == [200, 200]
+    assert order == ["start", "end"]  # второй пакет дождался первого и увидел, что менять уже нечего
+    async with db.session() as s:
+        emp = await s.scalar(select(Employee))
+        refs = list(
+            await s.scalars(select(Job.ref).where(Job.employee_id == emp.id, Job.status == "pending"))
+        )
+        assert emp.start_date == later and refs and len(refs) == len(set(refs))

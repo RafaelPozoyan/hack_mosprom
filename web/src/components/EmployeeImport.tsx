@@ -75,7 +75,6 @@ export default function EmployeeImport({ onClose, onDone }: { onClose: () => voi
   const reset = () => {
     setPreview(null)
     setError('')
-    if (input.current) input.current.value = ''
   }
 
   const rows = [...(preview?.rows ?? [])].sort(
@@ -140,7 +139,10 @@ export default function EmployeeImport({ onClose, onDone }: { onClose: () => voi
               type="file"
               accept=".xlsx,.csv"
               hidden
-              onChange={(e) => choose(e.target.files?.[0])}
+              onChange={(e) => {
+                choose(e.target.files?.[0])
+                e.target.value = '' // иначе после ошибки тот же исправленный файл не выбрать повторно
+              }}
             />
           </div>
           <details className="mt-4 text-[13px] text-ink/60">
