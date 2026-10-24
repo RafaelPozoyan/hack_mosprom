@@ -5,7 +5,6 @@
 HR получает handoff-карточку с контекстом, чтобы сотруднику не пришлось пересказывать проблему.
 """
 
-import asyncio
 import logging
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
@@ -17,8 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import channels, llm
 from app.bot.scenario import render
 from app.channels import ADMIN_FEED, Button, OutMessage, hub
-from app.db import session
-from app.models import Employee, Message, Ticket
+from app.models import Employee, Job, Message, Ticket
 
 log = logging.getLogger(__name__)
 
@@ -65,30 +63,43 @@ async def _handoff(s: AsyncSession, emp: Employee, subject: str) -> Handoff:
 async def create_ticket(s: AsyncSession, emp: Employee, kind: str, subject: str, severity: str = "medium") -> Ticket:
     t = Ticket(employee_id=emp.id, kind=kind, subject=subject, severity=severity, summary="ИИ готовит handoff-карточку…")
     s.add(t)
+    await s.flush()
+    # Без employee_id: подготовка резюме не должна удерживать блокировку диалога новичка.
+    s.add(Job(kind="handoff", ref=str(t.id), run_at=datetime.now(ZoneInfo("UTC"))))
     await s.commit()
     hub.publish(ADMIN_FEED, {"type": "ticket", "id": t.id, "kind": kind, "employee": emp.full_name})
-    asyncio.create_task(_finalize(t.id))
     return t
 
 
-async def _finalize(ticket_id: int) -> None:
-    """Резюме для HR и публикация в групповой чат — в фоне, чтобы сотрудник не ждал LLM."""
-    async with session() as s:
-        t = await s.get(Ticket, ticket_id)
-        emp = t.employee
-        card = await _handoff(s, emp, t.subject)
+async def finalize(s: AsyncSession, ticket_id: int) -> None:
+    """Подготовка карточки из очереди; подтверждённую публикацию в HR-чат не повторяем."""
+    t = await s.get(Ticket, ticket_id)
+    if t is None or t.status != "open":
+        return
+    card = await _handoff(s, t.employee, t.subject) if not t.hr_chat_mid else None
+    # За время работы LLM обращение могли закрыть. Закрытие и публикация сериализованы по Ticket.
+    stmt = select(Ticket).where(Ticket.id == ticket_id).with_for_update(of=Ticket, key_share=True).execution_options(populate_existing=True)
+    t = await s.scalar(stmt)
+    if t is None or t.status != "open":
+        return
+    emp = t.employee
+    if card and not t.hr_chat_mid:
         t.summary = f"{card.summary}\n\nРекомендуемый шаг: {card.suggested_action}".strip()
-        text = (
-            f"🆘 Эскалация #{t.id} · {KIND_LABEL.get(t.kind, t.kind)}\n"
-            f"👤 {emp.full_name}, {emp.position or '—'} · {emp.site_code} · день {adaptation_day(emp)} адаптации\n"
-            f"💬 «{t.subject[:700]}»\n\n🧠 {t.summary}\n\n"
-            "Ответьте реплаем на это сообщение — ответ уйдёт сотруднику в чат с Корсиком."
-        )
-        t.hr_chat_mid = await channels.post_hr_chat(OutMessage(text=text))
+    text = (
+        f"🆘 Эскалация #{t.id} · {KIND_LABEL.get(t.kind, t.kind)}\n"
+        f"👤 {emp.full_name}, {emp.position or '—'} · {emp.site_code} · день {adaptation_day(emp)} адаптации\n"
+        f"💬 «{t.subject[:700]}»\n\n🧠 {t.summary}\n\n"
+        "Ответьте реплаем на это сообщение — ответ уйдёт сотруднику в чат с Корсиком."
+    )
+    if not t.hr_chat_mid:
+        t.hr_chat_mid = await channels.post_hr_chat(OutMessage(text=text), raise_errors=True)
+    await s.commit()  # сохранённый mid позволяет повторить только уведомление рекрутеру
+    if emp.recruiter:
+        t = await s.scalar(stmt)
+        if t is not None and t.status == "open":
+            await channels.notify_staff(emp.recruiter, OutMessage(text=text), raise_errors=True)
         await s.commit()
-        if emp.recruiter:
-            await channels.notify_staff(emp.recruiter, OutMessage(text=text))
-        hub.publish(ADMIN_FEED, {"type": "ticket_updated", "id": t.id})
+    hub.publish(ADMIN_FEED, {"type": "ticket_updated", "id": ticket_id})
 
 
 async def open_dialog(s: AsyncSession, emp: Employee, subject: str, kind: str = "problem") -> Ticket:

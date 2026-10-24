@@ -76,7 +76,7 @@ class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
-    kind: Mapped[str] = mapped_column(String(20), default="step")  # step | reminder | digest
+    kind: Mapped[str] = mapped_column(String(20), default="step")  # step | reminder | digest | handoff
     ref: Mapped[str] = mapped_column(String(100))  # id шага / опроса
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | done | cancelled | failed

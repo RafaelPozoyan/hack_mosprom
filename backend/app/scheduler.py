@@ -51,7 +51,7 @@ async def run_job(job_id: int) -> None:
 
 async def _execute(s, job: Job) -> None:
     from app.analytics import digest
-    from app.bot import surveys
+    from app.bot import escalation, surveys
     from app.bot.scenario import run_step
 
     job_id = job.id
@@ -61,6 +61,8 @@ async def _execute(s, job: Job) -> None:
             await run_step(s, emp, job.ref)
         elif job.kind == "reminder" and emp:
             await surveys.remind(s, emp, job.ref)
+        elif job.kind == "handoff":
+            await escalation.finalize(s, int(job.ref))
         elif job.kind == "digest":
             await digest.run(s)
             await ensure_digest_job(s, after=utcnow())
