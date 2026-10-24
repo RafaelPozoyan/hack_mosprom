@@ -11,14 +11,14 @@ import secrets
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import Response
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,12 +27,22 @@ from app.bot.scenario import add_months, schedule_employee
 from app.config import settings
 from app.db import get_session
 from app.models import Employee, Site, Staff
+from app.scheduler import EMPLOYEE_LOCK_NAMESPACE
 
 # Настройка команды: столько записей ещё можно проверить глазами, а выгрузка всего штата вместо списка
 # новичков упрётся в лимит, а не разошлёт сотни приглашений.
 MAX_ROWS = 500
 MAX_BYTES = 5 * 1024 * 1024  # с большим запасом вмещает таблицу на MAX_ROWS строк
 HEADER_ROWS = 10  # в выгрузках 1С над таблицей бывают название отчёта, период и пустые строки
+# Настройка команды: год в обе стороны с запасом покрывает испытательный срок (3 месяца по ТЗ) и ранние офферы.
+# Дата дальше — почти наверняка ошибка выгрузки, например «01.01.0001»: так 1С выгружает пустую дату.
+START_WINDOW = timedelta(days=366)
+# Длины колонок в базе: слишком длинное значение не запишется, поэтому строка отклоняется заранее.
+LIMITS = {
+    c: Employee.__table__.c[c].type.length
+    for c in ("personnel_number", "full_name", "position", "department")
+}
+FIRST_NAME_LIMIT = Employee.__table__.c.first_name.type.length
 
 # Поля записи и их названия для HR: заголовки колонок файла и подписи изменений.
 COLUMNS = {
@@ -80,6 +90,12 @@ def _text(value) -> str:
     if isinstance(value, float) and value.is_integer():
         value = int(value)  # Excel хранит табельный номер 123 как 123.0
     return " ".join(str(value).split()) if value is not None else ""
+
+
+def _number(value) -> str:
+    """Табельный номер без ведущих нулей: Excel превращает «000501» в число 501, а это тот же человек."""
+    number = _text(value)
+    return (number.lstrip("0") or "0") if number.isdigit() else number
 
 
 def _date(value) -> date | None:
@@ -231,7 +247,7 @@ def check_rows(rows: list[tuple[int, dict]], sites: dict[str, str], staff: list,
     seen: dict[str, int] = {}
     plans = []
     for n, raw in rows:
-        p = Plan(n, _text(raw.get("personnel_number")), _text(raw.get("full_name")))
+        p = Plan(n, _number(raw.get("personnel_number")), _text(raw.get("full_name")))
         p.position, p.department = _text(raw.get("position")), _text(raw.get("department"))
         p.employee = existing.get(p.personnel_number)
         if not p.personnel_number:
@@ -244,21 +260,33 @@ def check_rows(rows: list[tuple[int, dict]], sites: dict[str, str], staff: list,
             seen[p.personnel_number] = n
         if not p.full_name:
             p.errors.append("Нет ФИО.")
+        too_long = [col for col, limit in LIMITS.items() if len(getattr(p, col)) > limit]
+        p.errors += [f"{COLUMNS[col]} длиннее {LIMITS[col]} символов." for col in too_long]
+        if p.full_name and "full_name" not in too_long and len(_first_name(p.full_name)) > FIRST_NAME_LIMIT:
+            p.errors.append(f"Имя длиннее {FIRST_NAME_LIMIT} символов.")
         site = _text(raw.get("site"))
         p.site_code = site_by_name.get(_key(site))
         if not p.site_code:
             known = "; ".join(f"{title} ({code})" for code, title in sites.items())
             p.errors.append(f"Площадка «{site}» не найдена. Подходят: {known}." if site else "Нет площадки.")
-        p.start_date = _date(raw.get("start_date"))
-        value = _text(raw.get("start_date"))
-        if not p.start_date:
+        start, value = _date(raw.get("start_date")), _text(raw.get("start_date"))
+        if not start:
             p.errors.append(
                 f"«{value}» не похоже на дату выхода — нужна дата вида 02.11.2026."
                 if value
                 else "Нет даты выхода."
             )
-        elif add_months(p.start_date, settings().probation_months) < today:
-            p.warnings.append("Испытательный срок по этой дате уже закончился — сообщений по плану не будет.")
+        elif abs(start - today) > START_WINDOW:
+            shown = f"{start.day:02}.{start.month:02}.{start.year:04}"
+            p.errors.append(
+                f"Дата выхода {shown} дальше чем на год от сегодня — проверьте её в кадровой системе."
+            )
+        else:
+            p.start_date = start
+            if add_months(start, settings().probation_months) < today:
+                p.warnings.append(
+                    "Испытательный срок по этой дате уже закончился — сообщений по плану не будет."
+                )
         p.manager = _staff(p, raw.get("manager"), staff, "manager", "Руководитель")
         p.recruiter = _staff(p, raw.get("recruiter"), staff, "recruiter", "Рекрутер")
         if p.errors:
@@ -278,11 +306,12 @@ def check_rows(rows: list[tuple[int, dict]], sites: dict[str, str], staff: list,
 
 
 async def plan_rows(s: AsyncSession, rows: list[tuple[int, dict]]) -> list[Plan]:
-    numbers = {_text(raw.get("personnel_number")) for _, raw in rows} - {""}
-    existing = (await s.scalars(select(Employee).where(Employee.personnel_number.in_(numbers)))).all()
+    numbers = {_number(raw.get("personnel_number")) for _, raw in rows} - {""}
+    saved = (await s.scalars(select(Employee).where(Employee.personnel_number.is_not(None)))).all()
+    existing = [e for e in saved if _number(e.personnel_number) in numbers]
     sites = {x.code: x.name for x in (await s.scalars(select(Site).order_by(Site.code))).all()}
     staff = list((await s.scalars(select(Staff))).all())
-    return check_rows(rows, sites, staff, {e.personnel_number: e for e in existing}, date.today())
+    return check_rows(rows, sites, staff, {_number(e.personnel_number): e for e in existing}, date.today())
 
 
 def _first_name(full_name: str) -> str:
@@ -313,8 +342,15 @@ def plan_view(p: Plan) -> dict:
     }
 
 
+async def _lock_employee(s: AsyncSession, emp_id: int) -> None:
+    """Та же блокировка новичка, что у планировщика: пока она взята, его шаги не выполняются, а параллельная
+    загрузка ждёт. Берётся до правки строки сотрудника — планировщик, держа её, сам может менять эту строку."""
+    await s.execute(select(func.pg_advisory_xact_lock(EMPLOYEE_LOCK_NAMESPACE, emp_id)))
+
+
 async def apply(s: AsyncSession, plans: list[Plan]) -> None:
-    """Записать новые и изменённые записи. План пересчитывается, только если сдвинулись дата или площадка."""
+    """Записать новые и изменённые записи. Новичок сохраняется одной транзакцией вместе со своим планом;
+    план пересчитывается, только если сдвинулись дата или площадка."""
     months = settings().probation_months
     for p in plans:
         if p.status == "new":
@@ -329,6 +365,8 @@ async def apply(s: AsyncSession, plans: list[Plan]) -> None:
             s.add(p.employee)
             replan = True
         elif p.status == "update":
+            await _lock_employee(s, p.employee.id)
+            await s.refresh(p.employee)  # параллельная загрузка могла уже записать те же изменения
             changes = _updates(p.employee, p)
             for k, v in changes.items():
                 setattr(p.employee, k, v)
@@ -340,14 +378,16 @@ async def apply(s: AsyncSession, plans: list[Plan]) -> None:
         else:
             continue
         try:
-            await s.commit()
+            await s.flush()
         except IntegrityError as e:  # тот же табельный номер успел записать параллельный запрос
             await s.rollback()
             raise HTTPException(
                 409, "Эти новички уже загружаются. Обновите список и повторите загрузку."
             ) from e
         if replan:
-            await schedule_employee(s, p.employee)
+            await schedule_employee(s, p.employee)  # сохраняет новичка и план одним commit
+        else:
+            await s.commit()
 
 
 # --- панель HR ---------------------------------------------------------------------------------------
@@ -430,12 +470,12 @@ hr_router = APIRouter(prefix="/api/hr-system", dependencies=[Depends(hr_key)])
 class HrEmployee(BaseModel):
     personnel_number: str | int
     full_name: str
-    position: str = ""
-    department: str = ""
+    position: str | None = None
+    department: str | None = None
     site: str  # код или название площадки
     start_date: date | str  # 2026-11-02 или 02.11.2026
-    manager: str = ""  # ФИО, как в панели Корсика
-    recruiter: str = ""
+    manager: str | None = None  # ФИО, как в панели Корсика
+    recruiter: str | None = None
 
 
 class HrBatch(BaseModel):
