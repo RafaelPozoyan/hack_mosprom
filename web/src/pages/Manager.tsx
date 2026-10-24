@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
 import { Link, Route, Routes, useParams } from 'react-router'
 import { api, fmtDateTime, type ManagerCardData, type ManagerHome, type Meta } from '../api'
 import { Avatar, Card, Empty, KorsikMark, siteName, timeAgo } from '../components/ui'
@@ -58,7 +58,7 @@ export function ManagerView({ code, base }: { code: string; base: string }) {
   )
 }
 
-export function ManagerCard({ code }: { code: string }) {
+export function ManagerCard({ code, base }: { code: string; base: string }) {
   const { id } = useParams()
   const { data, isError } = useQuery({
     queryKey: ['manager-card', code, id],
@@ -75,6 +75,12 @@ export function ManagerCard({ code }: { code: string }) {
   const request = data.notifications.find((n) => n.request) // последняя рекомендация HR — без ответов новичка
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-5">
+      <Link
+        to={base}
+        className="flex w-fit items-center gap-1.5 text-sm text-ink/55 transition hover:text-ink"
+      >
+        <ArrowLeft size={16} /> Мои новички
+      </Link>
       <Card>
         <div className="flex flex-wrap items-center gap-4">
           <Avatar name={e.full_name} size={56} />
@@ -175,7 +181,7 @@ export default function ManagerPreview({ card = false }: { card?: boolean }) {
   const link = `${location.origin}/m/${code}`
   return (
     <>
-      {card ? <ManagerCard code={code} /> : <ManagerView code={code} base="/my" />}
+      {card ? <ManagerCard code={code} base="/my" /> : <ManagerView code={code} base="/my" />}
       <p className="mx-auto mt-5 max-w-4xl text-xs text-ink/45">
         Руководитель открывает этот экран по личной ссылке:{' '}
         <a href={link} target="_blank" rel="noreferrer" className="underline">
@@ -197,7 +203,7 @@ export function ManagerLink() {
       </div>
       <Routes>
         <Route index element={<ManagerView code={code} base={`/m/${code}`} />} />
-        <Route path=":id" element={<ManagerCard code={code} />} />
+        <Route path=":id" element={<ManagerCard code={code} base={`/m/${code}`} />} />
       </Routes>
     </div>
   )
