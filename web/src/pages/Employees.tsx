@@ -130,10 +130,10 @@ export default function Employees() {
           <table className="w-full table-fixed text-sm">
             <thead className="text-left text-xs text-ink/45">
               <tr className="border-b border-ink/[0.07]">
-                <th className="w-[28%] py-2.5 font-medium">Сотрудник</th>
+                <th className="w-[25%] py-2.5 font-medium">Сотрудник</th>
                 <th className="w-[14%] font-medium">Площадка</th>
                 <th className="w-[10%] font-medium">Первый день</th>
-                <th className="w-[22%] font-medium">Где сейчас</th>
+                <th className="w-[21%] font-medium">Где сейчас</th>
                 <th className="text-right font-medium">Статус</th>
               </tr>
             </thead>
@@ -144,7 +144,7 @@ export default function Employees() {
                   className="cursor-pointer border-b border-ink/[0.04] transition hover:bg-ink/[0.02]"
                   onClick={() => nav(`/employees/${e.id}`)}
                 >
-                  <td className="py-3">
+                  <td className="py-3 pr-3">
                     <div className="flex items-center gap-3">
                       <Avatar name={e.full_name} size={34} />
                       <div>
@@ -153,9 +153,9 @@ export default function Employees() {
                       </div>
                     </div>
                   </td>
-                  <td className="text-ink/70">{siteName(e.site_code)}</td>
-                  <td className="text-ink/70 tabular-nums">{fmtDate(e.start_date)}</td>
-                  <td>
+                  <td className="pr-3 text-ink/70">{siteName(e.site_code)}</td>
+                  <td className="pr-3 text-ink/70 tabular-nums">{fmtDate(e.start_date)}</td>
+                  <td className="pr-3">
                     <StageCell e={e} />
                   </td>
                   <td className="text-right">
