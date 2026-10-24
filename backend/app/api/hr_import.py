@@ -38,11 +38,8 @@ COLUMNS = {
     "recruiter": "Рекрутер",
 }
 STATUSES = ("new", "update", "unchanged", "error")
-FIELD_COLUMN = {
-    "site_code": "site",
-    "manager_id": "manager",
-    "recruiter_id": "recruiter",
-}  # для подписи изменений
+# поле сотрудника → колонка: подпись изменения в ответе
+FIELD_COLUMN = {"site_code": "site", "manager_id": "manager", "recruiter_id": "recruiter"}
 
 
 def _key(value) -> str:
