@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell, ClipboardList, MessageCircle, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { PHASES, api, type Meta } from '../api'
-import { Badge, Btn, Card, Modal, inputCls, siteName } from '../components/ui'
+import { Badge, Btn, Card, Modal, inputCls, siteName, useDemo } from '../components/ui'
 
 type Step = Meta['steps'][number]
 
@@ -25,6 +25,7 @@ const when = (at: Step['at']) => {
 }
 
 export default function Scenario() {
+  const demo = useDemo()
   const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
   const [edit, setEdit] = useState<Step | null>(null)
   if (!meta) return null
@@ -109,16 +110,18 @@ export default function Scenario() {
               <li>Сложный вопрос — передаёт живому HR в том же чате</li>
             </ul>
           </Card>
-          <Card title="Подключение">
-            <div className="flex flex-col gap-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span>Мессенджер MAX</span>
-                <Badge tone={meta.max_connected ? 'green' : 'amber'}>
-                  {meta.max_connected ? 'подключён' : 'демо-чат'}
-                </Badge>
+          {demo && (
+            <Card title="Подключение">
+              <div className="flex flex-col gap-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>Мессенджер MAX</span>
+                  <Badge tone={meta.max_connected ? 'green' : 'amber'}>
+                    {meta.max_connected ? 'подключён' : 'демо-чат'}
+                  </Badge>
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+          )}
         </div>
       </div>
       {edit && <StepEditor step={edit} onClose={() => setEdit(null)} />}
