@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { CheckCircle2, Inbox, Sparkles } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { CheckCircle2, Sparkles } from 'lucide-react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { api, fmtDateTime, type Ticket } from '../api'
 import { ResponseLine } from '../components/ResponseTime'
@@ -11,7 +11,7 @@ export default function Tickets() {
   const qc = useQueryClient()
   const [params, setParams] = useSearchParams()
   const [status, setStatus] = useState<'open' | 'closed'>('open')
-  const { data: list = [] } = useQuery({
+  const { data: list = [], isPending } = useQuery({
     queryKey: ['tickets', status],
     queryFn: () => api.get<Ticket[]>(`/api/tickets?status=${status}`),
     refetchInterval: 10_000,
@@ -30,7 +30,8 @@ export default function Tickets() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
       <h1 className="text-2xl font-semibold tracking-tight">Обращения новичков</h1>
-      <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
+      {/* Пока список грузится, колонка справа уже на месте — иначе страница дёргается */}
+      <div className={clsx('grid gap-5', (selected || isPending) && 'lg:grid-cols-[360px_1fr]')}>
         <Card
           action={
             <div className="flex rounded-xl bg-ink/[0.05] p-0.5 text-[13px]">
@@ -45,12 +46,14 @@ export default function Tickets() {
               ))}
             </div>
           }
-          title={status === 'open' ? `Ждут ответа: ${list.length}` : 'Решённые'}
+          title={status === 'open' ? `Ждут ответа${isPending ? '' : `: ${list.length}`}` : 'Решённые'}
         >
           {list.length === 0 ? (
-            <Empty icon={<CheckCircle2 className="text-lime-2" />}>
-              {status === 'open' ? 'Все обращения разобраны' : 'Пока пусто'}
-            </Empty>
+            !isPending && (
+              <Empty icon={<CheckCircle2 className="text-lime-2" />}>
+                {status === 'open' ? 'Все обращения разобраны' : 'Здесь будут закрытые обращения'}
+              </Empty>
+            )
           ) : (
             <div className="-mx-2 flex flex-col">
               {list.map((t) => (
@@ -71,21 +74,15 @@ export default function Tickets() {
                     <div className="mt-0.5 flex items-center gap-1.5">
                       <Badge tone={TICKET_KIND[t.kind]?.tone}>{TICKET_KIND[t.kind]?.label}</Badge>
                       {t.response?.overdue && <Badge tone="red">просрочено</Badge>}
-                      <span className="truncate text-xs text-ink/55">{t.subject}</span>
                     </div>
+                    <div className="mt-1 line-clamp-2 text-xs text-ink/55">{t.subject}</div>
                   </div>
                 </button>
               ))}
             </div>
           )}
         </Card>
-        {selected ? (
-          <TicketView id={selected} />
-        ) : (
-          <Card>
-            <Empty icon={<Inbox className="text-ink/30" />}>Выберите обращение слева</Empty>
-          </Card>
-        )}
+        {selected && <TicketView key={selected} id={selected} />}
       </div>
     </div>
   )
@@ -98,7 +95,16 @@ function TicketView({ id }: { id: number }) {
     queryFn: () => api.get<Ticket>(`/api/tickets/${id}`),
   })
   const [text, setText] = useState('')
+  const box = useRef<HTMLDivElement>(null)
+  const start = useRef<HTMLDivElement>(null)
+  // Переписка открывается на начале обращения: всё, что выше, — предыстория для справки.
+  useEffect(() => {
+    if (box.current && start.current) box.current.scrollTop = start.current.offsetTop - 4
+  }, [t?.id])
   if (!t) return null
+  // Сервер отдаёт до 8 сообщений до обращения и все после; граница — первое сообщение не раньше обращения.
+  const created = new Date(t.created_at).getTime()
+  const first = t.messages?.findIndex((m) => new Date(m.created_at).getTime() >= created) ?? -1
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ['tickets'] })
     qc.invalidateQueries({ queryKey: ['ticket', id] })
@@ -122,13 +128,6 @@ function TicketView({ id }: { id: number }) {
         </Link>
       }
       subtitle={`${siteName(t.site)} · ${fmtDateTime(t.created_at)}`}
-      action={
-        t.status === 'open' && (
-          <Btn variant="ghost" small onClick={close}>
-            <CheckCircle2 size={14} /> Решено
-          </Btn>
-        )
-      }
     >
       <ResponseLine t={t} />
       <div className="mb-4 rounded-2xl bg-lime/15 p-4 text-sm">
@@ -139,43 +138,57 @@ function TicketView({ id }: { id: number }) {
           {preparing ? 'Корсик собирает контекст переписки…' : t.summary}
         </div>
       </div>
-      <div className="flex max-h-[440px] flex-col gap-2 overflow-y-auto rounded-2xl bg-ink/[0.03] p-3">
-        {t.messages?.map((m) => (
-          <div
-            key={m.id}
-            className={clsx(
-              'max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap',
-              m.author === 'employee'
-                ? 'self-end bg-[#d9f2a6]'
-                : m.author === 'hr'
-                  ? 'bg-sky-100'
-                  : 'bg-white',
+      <div
+        ref={box}
+        className="relative flex max-h-[440px] flex-col gap-2 overflow-y-auto rounded-2xl bg-ink/[0.03] p-3"
+      >
+        {t.messages?.map((m, i) => (
+          <Fragment key={m.id}>
+            {i === first && i > 0 && (
+              <div ref={start} className="flex items-center gap-3 py-1 text-[11px] font-medium text-ink/45">
+                <span className="h-px flex-1 bg-ink/10" />
+                обращение {fmtDateTime(t.created_at)}
+                <span className="h-px flex-1 bg-ink/10" />
+              </div>
             )}
-          >
-            <div className="mb-0.5 text-[11px] text-ink/45">
-              {m.author === 'employee' ? t.employee : m.author === 'hr' ? 'HR' : 'Корсик'} ·{' '}
-              {fmtDateTime(m.created_at)}
+            <div
+              className={clsx(
+                'max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap',
+                m.author === 'employee'
+                  ? 'self-end bg-[#d9f2a6]'
+                  : m.author === 'hr'
+                    ? 'bg-sky-100'
+                    : 'bg-white',
+              )}
+            >
+              <div className="mb-0.5 text-[11px] text-ink/45">
+                {m.author === 'employee' ? t.employee : m.author === 'hr' ? 'HR' : 'Корсик'} ·{' '}
+                {fmtDateTime(m.created_at)}
+              </div>
+              {m.text}
             </div>
-            {m.text}
-          </div>
+          </Fragment>
         ))}
       </div>
       {t.status === 'open' ? (
         <>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex flex-wrap gap-2">
             <input
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && reply()}
               placeholder="Напишите ответ — он придёт новичку в чат с Корсиком"
-              className={clsx(inputCls, 'flex-1')}
+              className={clsx(inputCls, 'min-w-60 flex-1')}
             />
             <Btn onClick={reply} disabled={!text.trim()}>
               Ответить
             </Btn>
+            <Btn variant="ghost" onClick={close}>
+              {t.response?.first_reply_at ? 'Закрыть обращение' : 'Закрыть без ответа'}
+            </Btn>
           </div>
           <div className="mt-2 text-xs text-ink/40">
-            Можно ответить и из группового чата HR в MAX — реплаем на карточку обращения.
+            Можно ответить и в MAX: в чате HR ответьте на сообщение с этим обращением.
           </div>
         </>
       ) : (

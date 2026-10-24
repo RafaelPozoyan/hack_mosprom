@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, BellRing, CalendarClock, Lightbulb, ShieldCheck } from 'lucide-react'
 import { Link, Route, Routes, useParams } from 'react-router'
 import { api, fmtDateTime, type ManagerCardData, type ManagerHome, type Meta } from '../api'
-import { Avatar, Card, Empty, KorsikMark, siteName, timeAgo } from '../components/ui'
+import { Avatar, Card, Empty, KorsikMark, siteName, timeAgo, useDemo } from '../components/ui'
 import { StageCell } from './Employees'
 
 // Руководитель видит прогресс и рекомендации по своим новичкам. Фильтрует сервер (/api/m/<код>): свободные ответы
@@ -58,7 +58,7 @@ export function ManagerView({ code, base }: { code: string; base: string }) {
   )
 }
 
-export function ManagerCard({ code }: { code: string }) {
+export function ManagerCard({ code, base }: { code: string; base: string }) {
   const { id } = useParams()
   const { data, isError } = useQuery({
     queryKey: ['manager-card', code, id],
@@ -75,6 +75,12 @@ export function ManagerCard({ code }: { code: string }) {
   const request = data.notifications.find((n) => n.request) // последняя рекомендация HR — без ответов новичка
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-5">
+      <Link
+        to={base}
+        className="flex w-fit items-center gap-1.5 text-sm text-ink/55 transition hover:text-ink"
+      >
+        <ArrowLeft size={16} /> Мои новички
+      </Link>
       <Card>
         <div className="flex flex-wrap items-center gap-4">
           <Avatar name={e.full_name} size={56} />
@@ -105,7 +111,7 @@ export function ManagerCard({ code }: { code: string }) {
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-ink/70">
-              Проведите короткую встречу 1:1 в ближайшие дни. Что стоит обсудить:
+              Проведите короткую личную встречу в ближайшие дни. Что стоит обсудить:
             </p>
             {data.signals.map((s) => (
               <div key={s} className="rounded-xl bg-amber-50 px-3 py-2 text-sm first-letter:uppercase">
@@ -119,7 +125,7 @@ export function ManagerCard({ code }: { code: string }) {
         <Card
           title={
             <span className="flex items-center gap-2">
-              <CalendarClock size={17} /> Что дальше
+              <CalendarClock size={17} /> Что Корсик сделает дальше
             </span>
           }
         >
@@ -163,6 +169,7 @@ export function ManagerCard({ code }: { code: string }) {
 
 /** Роль «Руководитель» в панели HR: тот же экран и тот же ответ сервера, что по личной ссылке руководителя. */
 export default function ManagerPreview({ card = false }: { card?: boolean }) {
+  const demo = useDemo()
   const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
   const code = meta?.staff.find((s) => s.role === 'manager')?.code
   if (!meta) return null
@@ -175,13 +182,15 @@ export default function ManagerPreview({ card = false }: { card?: boolean }) {
   const link = `${location.origin}/m/${code}`
   return (
     <>
-      {card ? <ManagerCard code={code} /> : <ManagerView code={code} base="/my" />}
-      <p className="mx-auto mt-5 max-w-4xl text-xs text-ink/45">
-        Руководитель открывает этот экран по личной ссылке:{' '}
-        <a href={link} target="_blank" rel="noreferrer" className="underline">
-          {link}
-        </a>
-      </p>
+      {card ? <ManagerCard code={code} base="/my" /> : <ManagerView code={code} base="/my" />}
+      {demo && (
+        <p className="mx-auto mt-5 max-w-4xl text-xs text-ink/45">
+          Руководитель открывает этот экран по личной ссылке:{' '}
+          <a href={link} target="_blank" rel="noreferrer" className="underline">
+            {link}
+          </a>
+        </p>
+      )}
     </>
   )
 }
@@ -197,7 +206,7 @@ export function ManagerLink() {
       </div>
       <Routes>
         <Route index element={<ManagerView code={code} base={`/m/${code}`} />} />
-        <Route path=":id" element={<ManagerCard code={code} />} />
+        <Route path=":id" element={<ManagerCard code={code} base={`/m/${code}`} />} />
       </Routes>
     </div>
   )

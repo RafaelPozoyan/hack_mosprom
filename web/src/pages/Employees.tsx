@@ -13,15 +13,20 @@ import {
   Field,
   Modal,
   Progress,
+  Tabs,
   inputCls,
+  plural,
   siteName,
   timeAgo,
 } from '../components/ui'
 
+const startsIn = (days: number) =>
+  days === 1 ? 'выходит завтра' : `выходит через ${days} ${plural(days, 'день', 'дня', 'дней')}`
+
 export function StageCell({ e }: { e: Pick<Employee, 'status' | 'start_date' | 'probation_end'> }) {
   const { day, total } = probationDay(e)
-  if (e.status === 'invited') return <span className="text-sm text-ink/50">ждём запуска бота по QR</span>
-  if (day < 1) return <span className="text-sm text-ink/60">выход через {1 - day} дн.</span>
+  if (e.status === 'invited') return <span className="text-sm text-ink/50">приглашение ещё не открыто</span>
+  if (day < 1) return <span className="text-sm text-ink/60">{startsIn(1 - day)}</span>
   return (
     <div className="w-40">
       <div className="mb-1 text-xs text-ink/55">
@@ -32,10 +37,33 @@ export function StageCell({ e }: { e: Pick<Employee, 'status' | 'start_date' | '
   )
 }
 
+type Filter = 'all' | 'waiting' | 'support' | 'new'
+
+// «Нужна поддержка» — только высокая тревога (signal.urgent): остальные тревожные ответы видны в строке
+// человека, но в этот фильтр не попадают. «Ещё не вышли» — до первого рабочего дня.
+const FILTERS: Record<Filter, (e: Employee) => boolean> = {
+  all: () => true,
+  waiting: (e) => !!e.open_ticket,
+  support: (e) => !!e.signal?.urgent,
+  new: (e) => probationDay(e).day < 1,
+}
+
+const NOBODY: Record<Filter, string> = {
+  all: 'Никого не нашлось',
+  waiting: 'Сейчас никто не ждёт ответа HR',
+  support: 'Сейчас никому не нужна поддержка',
+  new: 'Все новички уже вышли на работу',
+}
+
+// Порядок по срочности: сначала высокая тревога, затем обращение без ответа, затем остальные тревожные
+// ответы; веса складываются. Одинаково срочные остаются в порядке сервера — по дате выхода, новые сверху.
+// Среди ещё не вышедших выше тот, кто выходит раньше.
+const urgency = (e: Employee) => (e.signal ? (e.signal.urgent ? 4 : 1) : 0) + (e.open_ticket ? 2 : 0)
+
 export default function Employees() {
   const qc = useQueryClient()
   const nav = useNavigate()
-  const { data: emps = [] } = useQuery({
+  const { data: emps = [], isPending } = useQuery({
     queryKey: ['employees'],
     queryFn: () => api.get<Employee[]>('/api/employees'),
     refetchInterval: 15_000,
@@ -44,7 +72,14 @@ export default function Employees() {
   const [open, setOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const [q, setQ] = useState('')
-  const list = emps.filter((e) => `${e.full_name} ${e.position}`.toLowerCase().includes(q.toLowerCase()))
+  const [filter, setFilter] = useState<Filter>('all')
+  const list = emps
+    .filter(
+      (e) => FILTERS[filter](e) && `${e.full_name} ${e.position}`.toLowerCase().includes(q.toLowerCase()),
+    )
+    .sort(
+      (a, b) => urgency(b) - urgency(a) || (filter === 'new' ? a.start_date.localeCompare(b.start_date) : 0),
+    )
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-5">
@@ -60,30 +95,48 @@ export default function Employees() {
         </div>
       </div>
       <Card>
-        <div className="relative mb-3 max-w-sm">
-          <Search size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-ink/35" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Поиск по имени или должности"
-            className={`${inputCls} w-full pl-9`}
-          />
-        </div>
+        {emps.length > 0 && (
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <Tabs
+              value={filter}
+              onChange={setFilter}
+              items={[
+                { id: 'all', label: 'Все' },
+                { id: 'waiting', label: 'Ждут ответа', count: emps.filter(FILTERS.waiting).length },
+                { id: 'support', label: 'Нужна поддержка', count: emps.filter(FILTERS.support).length },
+                { id: 'new', label: 'Ещё не вышли' },
+              ]}
+            />
+            <div className="relative w-full max-w-xs">
+              <Search size={16} className="absolute top-1/2 left-3 -translate-y-1/2 text-ink/35" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Поиск по имени или должности"
+                className={`${inputCls} w-full pl-9`}
+              />
+            </div>
+          </div>
+        )}
         {list.length === 0 ? (
-          <Empty icon={<UserPlus className="text-ink/30" />}>
-            {emps.length
-              ? 'Никого не нашлось'
-              : 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'}
-          </Empty>
+          !isPending && (
+            <Empty icon={emps.length === 0 ? <UserPlus className="text-ink/30" /> : undefined}>
+              {emps.length === 0
+                ? 'Добавьте первого новичка или загрузите список из Excel — Корсик сам проведёт каждого по пути адаптации'
+                : q.trim()
+                  ? NOBODY.all
+                  : NOBODY[filter]}
+            </Empty>
+          )
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full table-fixed text-sm">
             <thead className="text-left text-xs text-ink/45">
               <tr className="border-b border-ink/[0.07]">
-                <th className="py-2.5 font-medium">Сотрудник</th>
-                <th className="font-medium">Площадка</th>
-                <th className="font-medium">Выход</th>
-                <th className="font-medium">Прогресс</th>
-                <th className="font-medium" />
+                <th className="w-[25%] py-2.5 font-medium">Сотрудник</th>
+                <th className="w-[14%] font-medium">Площадка</th>
+                <th className="w-[10%] font-medium">Первый день</th>
+                <th className="w-[21%] font-medium">Где сейчас</th>
+                <th className="text-right font-medium">Статус</th>
               </tr>
             </thead>
             <tbody>
@@ -93,7 +146,7 @@ export default function Employees() {
                   className="cursor-pointer border-b border-ink/[0.04] transition hover:bg-ink/[0.02]"
                   onClick={() => nav(`/employees/${e.id}`)}
                 >
-                  <td className="py-3">
+                  <td className="py-3 pr-3">
                     <div className="flex items-center gap-3">
                       <Avatar name={e.full_name} size={34} />
                       <div>
@@ -102,13 +155,13 @@ export default function Employees() {
                       </div>
                     </div>
                   </td>
-                  <td className="text-ink/70">{siteName(e.site_code)}</td>
-                  <td className="text-ink/70 tabular-nums">{fmtDate(e.start_date)}</td>
-                  <td>
+                  <td className="pr-3 text-ink/70">{siteName(e.site_code)}</td>
+                  <td className="pr-3 text-ink/70 tabular-nums">{fmtDate(e.start_date)}</td>
+                  <td className="pr-3">
                     <StageCell e={e} />
                   </td>
                   <td className="text-right">
-                    <div className="flex justify-end gap-1">
+                    <div className="flex flex-wrap justify-end gap-1">
                       {e.signal && (
                         <Badge tone={e.signal.urgent ? 'red' : 'amber'}>
                           {e.signal.reason} · {timeAgo(e.signal.at)}
@@ -291,7 +344,7 @@ export function InviteModal({ e, onClose }: { e: Employee; onClose: () => void }
   const [copied, setCopied] = useState(false)
   const qr = withToken(`/api/employees/${e.id}/qr.svg`)
   return (
-    <Modal open onClose={onClose} title={`Приглашение для ${e.first_name}`}>
+    <Modal open onClose={onClose} title={`Приглашение: ${e.full_name}`}>
       <div className="flex flex-col items-center gap-4 text-center">
         <img src={qr} alt="QR-код" className="size-52 rounded-2xl border border-ink/10 p-2" />
         <p className="max-w-sm text-sm text-ink/60">

@@ -2,13 +2,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Bell, ClipboardList, MessageCircle, Pencil } from 'lucide-react'
 import { useState } from 'react'
 import { PHASES, api, type Meta } from '../api'
-import { Badge, Btn, Card, Modal, inputCls, siteName } from '../components/ui'
+import { Badge, Btn, Card, Modal, inputCls, siteName, useDemo } from '../components/ui'
 
 type Step = Meta['steps'][number]
 
 const when = (at: Step['at']) => {
   if (!at) return ''
-  if (at.event) return 'сразу после запуска по QR'
+  if (at.event) return 'сразу, как новичок откроет приглашение'
   const t = at.time ? `, ${at.time}` : ''
   if (at.day !== undefined) return `за ${Math.abs(Number(at.day))} дн. до выхода${t}`
   if (at.workday !== undefined) return `${at.workday}-й рабочий день${t}`
@@ -25,6 +25,7 @@ const when = (at: Step['at']) => {
 }
 
 export default function Scenario() {
+  const demo = useDemo()
   const { data: meta } = useQuery({ queryKey: ['meta'], queryFn: () => api.get<Meta>('/api/meta') })
   const [edit, setEdit] = useState<Step | null>(null)
   if (!meta) return null
@@ -104,21 +105,23 @@ export default function Scenario() {
           <Card title="В любой момент">
             <ul className="flex flex-col gap-2 text-sm text-ink/70">
               <li>Отвечает на вопросы по документам базы знаний</li>
-              <li>/food — где пообедать</li>
-              <li>/hr — написать HR через Корсика</li>
+              <li>Где пообедать — команда /food</li>
+              <li>Написать HR через Корсика — команда /hr</li>
               <li>Сложный вопрос — передаёт живому HR в том же чате</li>
             </ul>
           </Card>
-          <Card title="Подключение">
-            <div className="flex flex-col gap-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span>Мессенджер MAX</span>
-                <Badge tone={meta.max_connected ? 'green' : 'amber'}>
-                  {meta.max_connected ? 'подключён' : 'демо-чат'}
-                </Badge>
+          {demo && (
+            <Card title="Подключение">
+              <div className="flex flex-col gap-2 text-sm">
+                <div className="flex items-center justify-between">
+                  <span>Мессенджер MAX</span>
+                  <Badge tone={meta.max_connected ? 'green' : 'amber'}>
+                    {meta.max_connected ? 'подключён' : 'демо-чат'}
+                  </Badge>
+                </div>
               </div>
-            </div>
-          </Card>
+            </Card>
+          )}
         </div>
       </div>
       {edit && <StepEditor step={edit} onClose={() => setEdit(null)} />}
