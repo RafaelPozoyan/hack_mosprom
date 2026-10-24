@@ -1,16 +1,18 @@
-"""Входящая очередь вебхука MAX. Внешние отправки и бизнес-коммиты пока не атомарны с ней."""
+"""Входящая очередь вебхука MAX: диалог и намерения доставки фиксируются вместе с событием."""
 
 import asyncio
 import hashlib
 import json
 import logging
+from contextlib import AsyncExitStack
 from datetime import timedelta
 
 from sqlalchemy import exists, func, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from app.bot.updates import process_max_update
+from app.bot.updates import EventContext, process_max_update
 from app.config import settings
 from app.db import session
 from app.models import MaxUpdate
@@ -84,7 +86,9 @@ async def enqueue(upd: dict) -> None:
 
 async def process_one() -> bool:
     earlier = aliased(MaxUpdate)
-    async with session() as s, s.begin():
+    callbacks = []
+    # Замок диалога освобождается после внешнего commit, иначе планировщик прочитает старое состояние.
+    async with AsyncExitStack() as locks, session() as s, s.begin():
         row = await s.scalar(
             select(MaxUpdate)
             .where(
@@ -106,8 +110,20 @@ async def process_one() -> bool:
         # событие останется pending; другой воркер не обгоняет его в диалоге этого пользователя.
         row.attempts += 1
         try:
-            await process_max_update(row.payload, raise_errors=True)
+            connection = await s.connection()
+            # Commit обработчика только сбрасывает изменения в общую транзакцию.
+            # Savepoint позволяет откатить их и сохранить ошибку/паузу самой очереди.
+            async with (
+                connection.begin_nested(),
+                AsyncSession(
+                    bind=connection, join_transaction_mode="rollback_only", expire_on_commit=False
+                ) as work,
+            ):
+                work.info["after_commit"] = callbacks
+                await process_max_update(row.payload, raise_errors=True, context=EventContext(work, locks))
+                await work.flush()
         except Exception as e:
+            callbacks.clear()
             row.error = type(
                 e
             ).__name__  # не сохраняем сообщения сотрудников или ответы внешнего API в ошибке
@@ -116,7 +132,12 @@ async def process_one() -> bool:
             log.warning("MAX inbox id=%s status=%s error=%s", row.id, row.status, row.error)
         else:
             row.status, row.done_at, row.error, row.payload = "done", utcnow(), None, {}
-        return True
+    for callback in callbacks:
+        try:
+            callback()
+        except Exception:
+            log.exception("MAX inbox post-commit callback failed")
+    return True
 
 
 async def loop() -> None:

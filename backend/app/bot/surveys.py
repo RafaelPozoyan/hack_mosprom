@@ -12,6 +12,7 @@ from app.analytics.sentiment import analyze_later, react
 from app.bot import progress
 from app.bot.scenario import render, run_step, scenario, step
 from app.channels import Button, OutMessage
+from app.db import after_commit
 from app.models import Employee, Job, Message, SurveyAnswer
 
 COMMENT_PROMPT = "Пожалуйста, {укажи|укажите} причину — это поможет нам сделать адаптацию лучше 🙏"
@@ -233,7 +234,7 @@ async def comment(s: AsyncSession, emp: Employee, text: str | None) -> None:
         ans = await s.get(SurveyAnswer, aw["answer_id"])
         flag = ans.value.get("flag") if ans else None
     if text:
-        analyze_later(emp.id, text, "survey", [flag] if flag else None)
+        after_commit(s, analyze_later, emp.id, text, "survey", [flag] if flag else None)
     elif flag:
         await react(s, emp, [flag], "medium", f"Ответ в опросе: {flag}")
     if aw.get("offer") and text:
