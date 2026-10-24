@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 import holidays
 import yaml
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
@@ -222,6 +222,14 @@ def timeline(emp: Employee) -> list[tuple[dict, datetime | None]]:
 
 async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
     """(Пере)планирует шаги сотрудника. Ручные шаги («по отмашке рекрутера») в очередь не попадают."""
+    waiting = {
+        job.ref: job
+        for job in await s.scalars(
+            select(Job).where(
+                Job.employee_id == emp.id, Job.kind == "step", Job.status == "await_start"
+            )
+        )
+    }
     await s.execute(
         update(Job)
         .where(Job.employee_id == emp.id, Job.status == "pending", Job.kind == "step")
@@ -230,7 +238,17 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
     now = datetime.now(ZoneInfo("UTC"))
     n = 0
     for st, run_at in timeline(emp):
-        if run_at is None or st.get("manual") or run_at < now:
+        if run_at is None or st.get("manual"):
+            continue
+        if st["id"] in waiting:
+            # После QR возвращаем и просроченные задачи; их порядок и актуальность проверит обработчик.
+            job = waiting[st["id"]]
+            job.run_at = run_at
+            if emp.status != "invited":
+                job.status, job.error = "pending", None
+            n += 1
+            continue
+        if run_at < now:
             continue
         s.add(Job(employee_id=emp.id, kind="step", ref=st["id"], run_at=run_at))
         n += 1
@@ -249,8 +267,6 @@ async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
     if st is None:
         return
     audience = st.get("audience", "employee")
-    if audience == "employee" and emp.status == "invited":
-        return  # бот MAX не может написать первым: пока новичок не открыл бота по QR, шаги для него пропускаем
     progress.check_step(emp, st)
     await backlog.check_order(s, emp, st)
     await progress.begin(s, emp, st)

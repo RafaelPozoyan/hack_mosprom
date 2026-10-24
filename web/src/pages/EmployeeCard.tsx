@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
 import { BellRing, CheckCircle2, Clock, Hand, MinusCircle, Play, QrCode, Upload } from 'lucide-react'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { ApiError, PHASES, api, fmtDateTime, probationDay, type EmployeeCardData, type TimelineStep } from '../api'
 import ChatPhone from '../components/ChatPhone'
@@ -97,6 +97,7 @@ const STATUS: Record<string, { label: string; icon: typeof Clock; cls: string }>
   pending: { label: 'запланировано', icon: Clock, cls: 'text-ink/35' },
   running: { label: 'отправляется', icon: Clock, cls: 'text-sky' },
   waiting: { label: 'ждём обязательный ответ', icon: Clock, cls: 'text-amber-600' },
+  await_start: { label: 'ждём запуска бота по QR', icon: Clock, cls: 'text-amber-600' },
   blocked: { label: 'после обязательного ответа', icon: Clock, cls: 'text-amber-600' },
   manual: { label: 'по вашей команде', icon: Hand, cls: 'text-amber-600' },
   failed: { label: 'не удалось отправить', icon: MinusCircle, cls: 'text-rose-500' },
@@ -133,6 +134,7 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
   const file = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  useEffect(() => { setError('') }, [t.status])
   const st = STATUS[t.status] ?? STATUS.pending
   const Icon = st.icon
   const run = async (f?: File) => {
@@ -169,7 +171,7 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
           {t.audience === 'recruiter' && <Badge tone="blue">рекрутеру</Badge>}
         </div>
         <div className="mt-0.5 line-clamp-1 text-xs text-ink/45">{t.preview}</div>
-        {(t.status === 'waiting' || t.status === 'blocked') && (
+        {t.run_at && ['waiting', 'blocked', 'await_start'].includes(t.status) && (
           <div className="mt-1 text-xs text-amber-700">{st.label}</div>
         )}
         {t.status_note && <div className="mt-1 text-xs text-ink/60">{t.status_note}</div>}

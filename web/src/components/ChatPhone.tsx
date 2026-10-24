@@ -139,6 +139,7 @@ export default function ChatPhone({ employee, onActivity, footer }: { employee: 
     try {
       const r = await api.post<{ ok: boolean; status?: string; run_at?: string }>(`${base}/next`)
       const status: Record<string, string> = {
+        await_start: 'Ждём запуска бота по QR',
         done: 'Шаг выполнен', skipped: 'Шаг пропущен', blocked: 'Ждём обязательный ответ',
         pending: 'Шаг ждёт повторной отправки', failed: 'Не удалось выполнить шаг', running: 'Шаг ещё обрабатывается',
       }

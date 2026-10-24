@@ -216,14 +216,16 @@ async def employee_card(emp_id: int, s: AsyncSession = Depends(get_session)):
         j = job_by_step.get(st["id"])
         status = "sent" if st["id"] in sent_steps else (j.status if j else ("manual" if st.get("manual") else "skipped"))
         status_note = None
-        if j and j.status == "skipped":
-            status, status_note = "skipped", j.error
+        if j and j.status in ("skipped", "await_start"):
+            status, status_note = j.status, j.error
         elif st["id"] not in sent_steps:
             status_note = backlog.skip_reason(e, st)
             if status_note:
                 status = "skipped"
         if st["id"] == waiting:
             status = "waiting"
+        if st["id"] == "welcome" and e.status == "invited":
+            status = "await_start"
         first = (st.get("messages") or [{}])[0]
         tl.append({"step_id": st["id"], "title": st.get("title", st["id"]), "phase": phase_of(st.get("at")),
                    "run_at": run_at.isoformat() if run_at else None,
@@ -394,7 +396,7 @@ async def run_step_now(emp_id: int, step_id: str, file: UploadFile | None = File
         j.status, j.attempts = "running", 1
         await s.commit()
         await scheduler._execute(s, j)
-        if j.status in ("blocked", "skipped"):
+        if j.status in ("blocked", "skipped", "await_start"):
             raise HTTPException(409, j.error)
         if j.status != "done":
             raise HTTPException(503, "Отправка не завершена. Задача сохранена для автоматического повтора; проверьте её состояние позже.")

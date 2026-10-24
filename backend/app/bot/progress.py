@@ -13,6 +13,10 @@ class StepBlocked(Exception):
     """Новый запрос обратной связи должен дождаться текущего обязательного ответа."""
 
 
+class StepNotStarted(StepBlocked):
+    """MAX не может написать новичку, пока тот сам не запустит бота."""
+
+
 def required_step(emp: Employee) -> str | None:
     from app.bot.scenario import scenario, step
 
@@ -40,6 +44,11 @@ def asks_feedback(st: dict) -> bool:
 def check_step(emp: Employee, st: dict) -> None:
     from app.bot.scenario import step
 
+    if emp.status == "invited" and st.get("audience", "employee") == "employee":
+        raise StepNotStarted(
+            "Новичок ещё не запустил бота. Попросите его открыть приглашение по QR-коду; "
+            "в демо нажмите «Новичок сканирует QR»."
+        )
     reason = backlog.skip_reason(emp, st)
     if reason:
         raise backlog.StepSkipped(reason)
