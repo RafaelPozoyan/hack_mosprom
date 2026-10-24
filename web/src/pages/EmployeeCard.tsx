@@ -1,15 +1,33 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { BellRing, CheckCircle2, Clock, Hand, MinusCircle, Play, QrCode, Upload } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import {
+  BellRing,
+  Check,
+  CheckCircle2,
+  Clock,
+  Copy,
+  Download,
+  FileText,
+  Hand,
+  MessageCircleReply,
+  MinusCircle,
+  Play,
+  QrCode,
+  Upload,
+} from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, useNavigate, useParams } from 'react-router'
 import {
   ApiError,
   PHASES,
   api,
+  fmtDate,
   fmtDateTime,
   probationDay,
+  withToken,
+  type Employee,
   type EmployeeCardData,
+  type Ticket,
   type TimelineStep,
 } from '../api'
 import ChatPhone from '../components/ChatPhone'
@@ -71,19 +89,18 @@ export default function EmployeeCard() {
                 <TeamPicker e={e} onDone={refresh} />
               </div>
             </div>
-            <Btn variant="ghost" onClick={() => setInvite(true)}>
-              <QrCode size={16} /> QR-приглашение
-            </Btn>
+            {e.status !== 'invited' && (
+              <Btn variant="ghost" onClick={() => setInvite(true)}>
+                <QrCode size={16} /> QR-приглашение
+              </Btn>
+            )}
           </div>
           <SupportNote empId={e.id} name={e.full_name} onSent={refresh} />
           <div className="mt-5">
-            {e.status === 'invited' ? (
-              <div className="rounded-xl bg-sky-50 px-4 py-3 text-sm text-sky-900">
-                Ждём, когда {e.first_name} отсканирует QR-код из оффера и запустит Корсика в MAX.
-              </div>
-            ) : day < 1 ? (
+            {day < 1 ? (
               <div className="text-sm text-ink/60">
-                До выхода на работу: {1 - day} дн. Корсик уже на связи и помогает подготовиться.
+                До выхода на работу: {1 - day} дн.
+                {e.status !== 'invited' && ' Корсик уже на связи и помогает подготовиться.'}
               </div>
             ) : (
               <>
@@ -98,6 +115,8 @@ export default function EmployeeCard() {
             )}
           </div>
         </Card>
+
+        <Actions data={data} onDone={refresh} />
 
         <Tabs
           value={tab}
@@ -128,6 +147,231 @@ export default function EmployeeCard() {
       )}
       {invite && <InviteModal e={e} onClose={() => setInvite(false)} />}
     </div>
+  )
+}
+
+// --- нужно ваше действие -----------------------------------------------------------------------------
+
+/** Шаг «по вашей команде», время которого пришло: его кнопки — в блоке «Нужно ваше действие», а не в ленте. */
+const awaitsHr = (t: TimelineStep) =>
+  t.manual && t.status === 'manual' && (!t.run_at || Date.parse(t.run_at) <= Date.now())
+
+/** Тема обращения из опроса приходит как «вопрос → ответ»; HR важнее слова самого новичка. */
+const ownWords = (subject: string) => subject.slice(subject.lastIndexOf('→') + 1).trim()
+
+/** Только то, что HR может сделать сам: ответить на обращение, отправить шаг по команде, пригласить новичка.
+ *  Заметная кнопка — у первой строки, у остальных — спокойные: главное действие на экране одно. */
+function Actions({ data, onDone }: { data: EmployeeCardData; onDone: () => void }) {
+  const e = data.employee
+  const rows = [
+    ...data.tickets
+      .filter((t) => t.status === 'open')
+      .map((t) => (main: boolean) => <TicketAction key={`t${t.id}`} t={t} name={e.first_name} main={main} />),
+    ...(e.status === 'active' ? data.timeline.filter(awaitsHr) : []).map((t) => (main: boolean) => (
+      <StepAction key={t.step_id} t={t} empId={e.id} onDone={onDone} main={main} />
+    )),
+    ...(e.status === 'invited' ? [(main: boolean) => <InviteAction key="invite" e={e} main={main} />] : []),
+  ]
+  if (!rows.length) return null
+  return (
+    <Card title="Нужно ваше действие">
+      <div className="flex flex-col divide-y divide-ink/[0.06]">{rows.map((row, i) => row(i === 0))}</div>
+    </Card>
+  )
+}
+
+function ActionRow({
+  icon,
+  title,
+  children,
+  actions,
+  error,
+}: {
+  icon: ReactNode
+  title: ReactNode
+  children: ReactNode
+  actions: ReactNode
+  error?: string
+}) {
+  return (
+    <div className="flex items-center gap-4 py-3 first:pt-0 last:pb-0">
+      {icon}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-1 basis-64">
+          <div className="text-sm font-medium">{title}</div>
+          <div className="mt-0.5 text-sm text-ink/55">{children}</div>
+          {error && (
+            <div role="alert" className="mt-1.5 text-sm text-rose-600">
+              {error}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">{actions}</div>
+      </div>
+    </div>
+  )
+}
+
+const rowIcon = (icon: ReactNode) => (
+  <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-700">{icon}</div>
+)
+
+function TicketAction({ t, name, main }: { t: Ticket; name: string; main: boolean }) {
+  const nav = useNavigate()
+  return (
+    <ActionRow
+      icon={rowIcon(<MessageCircleReply size={19} />)}
+      title={`${name} ждёт ответа HR с ${fmtDate(t.created_at)}`}
+      actions={
+        <Btn variant={main ? 'primary' : 'ghost'} onClick={() => nav(`/tickets?id=${t.id}`)}>
+          Ответить
+        </Btn>
+      }
+    >
+      <span className="line-clamp-2">«{ownWords(t.subject)}»</span>
+    </ActionRow>
+  )
+}
+
+function StepAction({
+  t,
+  empId,
+  onDone,
+  main,
+}: {
+  t: TimelineStep
+  empId: number
+  onDone: () => void
+  main: boolean
+}) {
+  const { run, busy, error } = useRunStep(empId, t, onDone)
+  const plan = t.step_id === 'd3_plan'
+  const variant = main ? 'primary' : 'ghost'
+  return (
+    <ActionRow
+      icon={rowIcon(plan ? <FileText size={19} /> : <Hand size={19} />)}
+      title={`${t.title} — ${t.run_at ? `ждёт с ${fmtDate(t.run_at)}` : 'ждёт вашей команды'}`}
+      error={error}
+      actions={
+        plan ? (
+          <>
+            <AttachPlan run={run} busy={busy} variant={variant} />
+            <Btn variant="ghost" onClick={() => run()} disabled={busy}>
+              Отправить без плана
+            </Btn>
+          </>
+        ) : (
+          <Btn variant={variant} onClick={() => run()} disabled={busy}>
+            Отправить
+          </Btn>
+        )
+      }
+    >
+      {plan
+        ? 'Корсик отправит новичку файл от руководителя вместе с сообщением о плане.'
+        : 'Этот шаг Корсик отправляет по вашей команде.'}
+    </ActionRow>
+  )
+}
+
+function InviteAction({ e, main }: { e: Employee; main: boolean }) {
+  const [copied, setCopied] = useState(false)
+  const qr = withToken(`/api/employees/${e.id}/qr.svg`)
+  return (
+    <ActionRow
+      icon={
+        <img
+          src={qr}
+          alt="QR-код приглашения"
+          className="size-28 shrink-0 rounded-xl border border-ink/10 p-1.5"
+        />
+      }
+      title="Приглашение в MAX ещё не открыто"
+      actions={
+        <>
+          {e.invite_link && (
+            <Btn
+              variant={main ? 'primary' : 'ghost'}
+              onClick={() => navigator.clipboard.writeText(e.invite_link!).then(() => setCopied(true))}
+            >
+              {copied ? <Check size={15} /> : <Copy size={15} />}{' '}
+              {copied ? 'Скопировано' : 'Скопировать ссылку'}
+            </Btn>
+          )}
+          <a href={qr} download={`QR ${e.full_name}.svg`}>
+            <Btn variant="ghost">
+              <Download size={15} /> Скачать QR
+            </Btn>
+          </a>
+        </>
+      }
+    >
+      Отправьте ссылку или добавьте QR-код в оффер. Корсик начнёт путь адаптации, как только новичок откроет
+      приглашение.
+    </ActionRow>
+  )
+}
+
+/** Отправить шаг сейчас — по команде HR или перемоткой в демо. Отказы сервера — человеческим языком. */
+function useRunStep(empId: number, t: TimelineStep, onDone: () => void) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    setError('')
+  }, [t.status])
+  const run = async (f?: File) => {
+    setBusy(true)
+    const fd = new FormData()
+    if (f) fd.append('file', f)
+    setError('')
+    try {
+      await api.post(`/api/employees/${empId}/steps/${t.step_id}/run`, fd)
+      onDone()
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        setError(e.detail ?? 'Шаг сейчас недоступен. Обновите карточку и проверьте его состояние.')
+        onDone()
+      } else if (e instanceof ApiError && e.status === 503) {
+        setError('Отправка не завершена. Корсик повторит её автоматически. Обновите карточку позже.')
+      } else {
+        setError('Не удалось подтвердить отправку. Обновите карточку и проверьте сообщения перед повтором.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+  return { run, busy, error }
+}
+
+/** «Приложить план»: выбранный файл Корсик отправит новичку вместе с сообщениями шага. */
+function AttachPlan({
+  run,
+  busy,
+  variant,
+  small,
+}: {
+  run: (f: File) => void
+  busy: boolean
+  variant: 'primary' | 'ghost'
+  small?: boolean
+}) {
+  const file = useRef<HTMLInputElement>(null)
+  return (
+    <>
+      <input
+        ref={file}
+        type="file"
+        hidden
+        onChange={(ev) => {
+          const f = ev.target.files?.[0]
+          ev.target.value = '' // после ошибки тот же файл можно выбрать снова
+          if (f) run(f)
+        }}
+      />
+      <Btn small={small} variant={variant} onClick={() => file.current?.click()} disabled={busy}>
+        <Upload size={small ? 13 : 15} /> Приложить план
+      </Btn>
+    </>
   )
 }
 
@@ -177,36 +421,9 @@ function Journey({ steps, empId, onDone }: { steps: TimelineStep[]; empId: numbe
 
 function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: () => void }) {
   const demo = useDemo()
-  const file = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    setError('')
-  }, [t.status])
+  const { run, busy, error } = useRunStep(empId, t, onDone)
   const st = STATUS[t.status] ?? STATUS.pending
   const Icon = st.icon
-  const run = async (f?: File) => {
-    setBusy(true)
-    const fd = new FormData()
-    if (f) fd.append('file', f)
-    setError('')
-    try {
-      await api.post(`/api/employees/${empId}/steps/${t.step_id}/run`, fd)
-      onDone()
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        setError(e.detail ?? 'Шаг сейчас недоступен. Обновите карточку и проверьте его состояние.')
-        onDone()
-      } else if (e instanceof ApiError && e.status === 503) {
-        setError('Отправка не завершена. Корсик повторит её автоматически. Обновите карточку позже.')
-      } else {
-        setError('Не удалось подтвердить отправку. Обновите карточку и проверьте сообщения перед повтором.')
-      }
-    } finally {
-      setBusy(false)
-      if (file.current) file.current.value = ''
-    }
-  }
   const sent = t.status === 'sent' || t.status === 'done'
   const obsolete = t.status === 'skipped' && Boolean(t.status_note)
   return (
@@ -231,21 +448,9 @@ function Step({ t, empId, onDone }: { t: TimelineStep; empId: number; onDone: ()
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <span className="text-xs text-ink/45">{t.run_at ? fmtDateTime(t.run_at) : st.label}</span>
-        {t.manual && !sent && !obsolete && (
+        {t.manual && !sent && !obsolete && !awaitsHr(t) && (
           <>
-            {t.step_id === 'd3_plan' && (
-              <>
-                <input
-                  ref={file}
-                  type="file"
-                  hidden
-                  onChange={(e) => e.target.files?.[0] && run(e.target.files[0])}
-                />
-                <Btn small variant="ghost" onClick={() => file.current?.click()} disabled={busy}>
-                  <Upload size={13} /> Приложить план
-                </Btn>
-              </>
-            )}
+            {t.step_id === 'd3_plan' && <AttachPlan small run={run} busy={busy} variant="ghost" />}
             <Btn small onClick={() => run()} disabled={busy}>
               Отправить
             </Btn>
