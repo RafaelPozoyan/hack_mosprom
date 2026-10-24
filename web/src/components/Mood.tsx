@@ -75,3 +75,32 @@ export function MoodWeek({ weeks }: { weeks: Week[] }) {
     </div>
   )
 }
+
+/** «Настроения»: четыре последние недели, новая сверху; неделя без ответов — словами. */
+export function MoodWeeks({ weeks }: { weeks: Week[] }) {
+  const byWeek = new Map(weeks.map((w) => [w.week, w]))
+  return (
+    <div className="flex flex-col gap-3">
+      {[0, 1, 2, 3].map((back) => {
+        const week = monday(back)
+        const w = byWeek.get(week)
+        return (
+          <div key={week} className="grid grid-cols-[104px_1fr] items-center gap-x-4 gap-y-1 text-[13px]">
+            <span className="text-ink/60">{back === 0 ? 'эта неделя' : since(week)}</span>
+            {w && total(w) ? (
+              <div className="flex flex-col gap-1">
+                <Strip w={w} />
+                <span className="text-ink/60">{anxious(w)}</span>
+              </div>
+            ) : (
+              <span className="text-ink/40">ответов не было</span>
+            )}
+          </div>
+        )
+      })}
+      <div className="mt-1">
+        <Legend />
+      </div>
+    </div>
+  )
+}
