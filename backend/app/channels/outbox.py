@@ -47,7 +47,7 @@ async def process_one() -> bool:
         # После получения замка перечитываем доставку: предыдущий владелец мог
         # завершить отправку или правку между выборкой кандидата и блокировкой.
         await s.refresh(row)
-        if row.status not in ("pending", "running") or row.available_at > utcnow():
+        if row.status not in ("pending", "running") or row.available_at > await s.scalar(select(func.now())):
             return False
         # Замок журнала общий с edit и каскадным удалением сотрудника.
         m = await s.get(Message, row.message_id)
