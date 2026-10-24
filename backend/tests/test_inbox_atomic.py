@@ -6,7 +6,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -15,7 +15,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import channels
-from app.bot import inbox, surveys, updates
+from app.bot import dialog, inbox, surveys, updates
 from app.db import Base
 from app.models import Employee, Job, MaxDelivery, MaxUpdate, Message, Site, Staff, SurveyAnswer, Ticket
 
@@ -242,3 +242,132 @@ async def test_sql_error_rolls_back_answer_but_saves_retry(db):
     assert await inbox.process_one()
     state, counts = await snapshot(db)
     assert state["survey"]["q"] == 1 and counts == [1, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_dialog_lock_is_held_until_inbox_commit(db, monkeypatch):
+    started, release, competitor_started = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    process, handle = inbox.process_max_update, dialog.handle
+    seen = []
+
+    async def pause(*args, **kwargs):
+        await process(*args, **kwargs)
+        started.set()
+        await release.wait()
+
+    async def observe(s, emp, ev):
+        if ev.kind == "text":
+            seen.append(emp.state["survey"]["q"])
+        else:
+            await handle(s, emp, ev)
+
+    async def compete():
+        competitor_started.set()
+        await updates.handle_employee_event(1, channels.InEvent("text", text="/menu"), raise_errors=True)
+
+    monkeypatch.setattr(inbox, "process_max_update", pause)
+    monkeypatch.setattr(dialog, "handle", observe)
+    await inbox.enqueue(callback())
+    worker = asyncio.create_task(inbox.process_one())
+    competitor = None
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        assert updates._locks[1].locked()
+        competitor = asyncio.create_task(compete())
+        await asyncio.wait_for(competitor_started.wait(), timeout=5)
+        assert updates._locks[1].locked() and not competitor.done() and not seen
+        release.set()
+        assert await asyncio.wait_for(worker, timeout=5)
+        await asyncio.wait_for(competitor, timeout=5)
+        assert seen == [1]
+    finally:
+        release.set()
+        tasks = [task for task in (worker, competitor) if task is not None]
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_comment_analysis_starts_only_after_commit(db, monkeypatch, fail):
+    async with db.session() as s:
+        ans = SurveyAnswer(employee_id=1, survey_id="day3", question_id="docs", value={"option": "c"})
+        msg = Message(employee_id=1, direction="in", author="employee", text="Нужна помощь с доступом")
+        s.add_all([ans, msg])
+        await s.flush()
+        emp = await s.get(Employee, 1)
+        emp.state = {
+            **emp.state,
+            "await": {"kind": "survey_comment", "answer_id": ans.id, "candidate_id": msg.id, "qid": "docs"},
+        }
+        await s.commit()
+    analysis = Mock()
+    monkeypatch.setattr(surveys, "analyze_later", analysis)
+    process = inbox.process_max_update
+
+    async def finish(*args, **kwargs):
+        await process(*args, **kwargs)
+        analysis.assert_not_called()
+        if fail:
+            raise RuntimeError("interrupted before inbox commit")
+
+    monkeypatch.setattr(inbox, "process_max_update", finish)
+    await inbox.enqueue(callback(f"a:confirm_comment:{msg.id}"))
+    assert await inbox.process_one()
+    if fail:
+        analysis.assert_not_called()
+        async with db.session() as s:
+            assert (await s.get(SurveyAnswer, ans.id)).comment is None
+    else:
+        analysis.assert_called_once_with(1, msg.text, "survey", None)
+        async with db.session() as s:
+            assert (await s.get(SurveyAnswer, ans.id)).comment == msg.text
+
+
+@pytest.mark.asyncio
+async def test_start_waits_before_binding_and_preserves_concurrent_state(db, monkeypatch):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.channel, emp.max_user_id = "web", None
+        emp.state = {"pressed": ["welcome:0"]}
+        await s.commit()
+    waiting = asyncio.Event()
+    lock_employee = updates.EventContext.lock_employee
+
+    async def observe_wait(context, employee_id):
+        waiting.set()
+        await lock_employee(context, employee_id)
+
+    monkeypatch.setattr(updates.EventContext, "lock_employee", observe_wait)
+    await inbox.enqueue(
+        {
+            "update_type": "bot_started",
+            "user": {"user_id": 1},
+            "chat_id": 1,
+            "timestamp": 1,
+            "payload": "demo",
+        }
+    )
+    worker = None
+    try:
+        async with updates._locks[1]:
+            worker = asyncio.create_task(inbox.process_one())
+            await asyncio.wait_for(waiting.wait(), timeout=5)
+            async with db.session() as s:
+                emp = await s.get(Employee, 1)
+                assert emp.channel == "web" and emp.max_user_id is None
+                emp.state = {**emp.state, "last_problem": "Нужны доступы"}
+                await asyncio.wait_for(s.commit(), timeout=5)
+        assert await asyncio.wait_for(worker, timeout=5)
+        async with db.session() as s:
+            emp = await s.get(Employee, 1)
+            assert emp.channel == "max" and emp.max_user_id == 1
+            assert emp.state == {"pressed": [], "last_problem": "Нужны доступы"}
+            assert await s.scalar(select(func.count()).select_from(MaxDelivery)) == 2
+            assert (await s.scalar(select(MaxUpdate))).status == "done"
+    finally:
+        if worker and not worker.done():
+            worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
