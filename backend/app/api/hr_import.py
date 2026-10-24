@@ -1,22 +1,28 @@
-"""Новички из кадровой системы: пакетный API для 1С и похожих систем.
+"""Новички из кадровой системы: файл Excel или CSV в панели HR и пакетный API для 1С и похожих систем.
 
-Ключ записи — табельный номер: повтор того же пакета не создаёт дублей, а перенос даты выхода перепланирует
+Ключ записи — табельный номер: повторная загрузка не создаёт дублей, а перенос даты выхода перепланирует
 ещё не отправленные шаги тем же schedule_employee, что и правка сотрудника в панели (PATCH /api/employees).
 """
 
+import csv
+import io
 import re
 import secrets
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi.responses import Response
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.admin import deep_link
+from app.api.admin import auth, deep_link
 from app.bot.scenario import add_months, schedule_employee
 from app.config import settings
 from app.db import get_session
@@ -25,6 +31,8 @@ from app.models import Employee, Site, Staff
 # Настройка команды: столько записей ещё можно проверить глазами, а выгрузка всего штата вместо списка
 # новичков упрётся в лимит, а не разошлёт сотни приглашений.
 MAX_ROWS = 500
+MAX_BYTES = 5 * 1024 * 1024  # с большим запасом вмещает таблицу на MAX_ROWS строк
+HEADER_ROWS = 10  # в выгрузках 1С над таблицей бывают название отчёта, период и пустые строки
 
 # Поля записи и их названия для HR: заголовки колонок файла и подписи изменений.
 COLUMNS = {
@@ -37,6 +45,24 @@ COLUMNS = {
     "manager": "Руководитель",
     "recruiter": "Рекрутер",
 }
+# Подсказки для листа «Как заполнить» в шаблоне и другие названия колонок в выгрузках кадровых систем.
+HINTS = {
+    "personnel_number": "Как в кадровой системе: по нему загрузка находит новичка",
+    "full_name": "Фамилия, имя, отчество. Корсик обращается по имени — второму слову",
+    "position": "Можно оставить пустой",
+    "department": "Можно оставить пустым",
+    "site": "Название или код площадки — список ниже",
+    "start_date": "Например, 02.11.2026. От неё Корсик считает план адаптации",
+    "manager": "ФИО, как в панели Корсика",
+    "recruiter": "ФИО, как в панели Корсика",
+}
+ALIASES = {
+    "personnel_number": ("табельный", "таб номер", "таб №", "табельный №"),
+    "full_name": ("сотрудник", "ф и о", "фамилия имя отчество"),
+    "department": ("отдел",),
+    "start_date": ("дата приема", "дата выхода на работу", "дата начала работы"),
+}
+REQUIRED = ("personnel_number", "full_name", "site", "start_date")
 STATUSES = ("new", "update", "unchanged", "error")
 # поле сотрудника → колонка: подпись изменения в ответе
 FIELD_COLUMN = {"site_code": "site", "manager_id": "manager", "recruiter_id": "recruiter"}
@@ -46,11 +72,19 @@ def _key(value) -> str:
     return " ".join(re.sub(r"[^\w№]+", " ", str(value or "").lower().replace("ё", "е")).split())
 
 
+HEADERS = {_key(title): col for col, title in COLUMNS.items()}
+HEADERS |= {_key(name): col for col, names in ALIASES.items() for name in names}
+
+
 def _text(value) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)  # Excel хранит табельный номер 123 как 123.0
     return " ".join(str(value).split()) if value is not None else ""
 
 
 def _date(value) -> date | None:
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, date):
         return value
     head = _text(value).split(" ")[0]  # 1С выгружает дату со временем: «02.11.2026 0:00:00»
@@ -60,6 +94,77 @@ def _date(value) -> date | None:
         except ValueError:
             continue
     return None
+
+
+# --- чтение файла ------------------------------------------------------------------------------------
+
+
+class FileProblem(ValueError):
+    """Файл целиком не подходит; текст ошибки показывается HR как есть."""
+
+
+def _xlsx(data: bytes) -> Iterable[tuple]:
+    wb = None
+    try:
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        sheet = wb.worksheets[0]
+        sheet.reset_dimensions()  # некоторые программы записывают неверный размер листа, и строки теряются
+        yield from sheet.iter_rows(values_only=True)
+    except Exception as e:  # повреждённый файл или не Excel
+        raise FileProblem("Не удалось открыть файл Excel. Откройте его и сохраните как .xlsx ещё раз.") from e
+    finally:
+        if wb:
+            wb.close()
+
+
+def _csv(data: bytes) -> Iterable[list]:
+    try:
+        raw = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raw = data.decode("cp1251", errors="replace")  # выгрузки 1С и Excel под Windows
+    try:
+        delimiter = csv.Sniffer().sniff(raw[:4096], delimiters=";,\t").delimiter
+    except csv.Error:
+        delimiter = ";"
+    return csv.reader(io.StringIO(raw), delimiter=delimiter)
+
+
+def read_file(filename: str, data: bytes) -> list[tuple[int, dict]]:
+    """Строки с номерами, как их видит HR в Excel. Заголовок ищется в первых строках листа."""
+    name = filename.lower()
+    if not name.endswith((".xlsx", ".csv")):
+        raise FileProblem("Нужен файл Excel (.xlsx) или CSV. Старый формат .xls сохраните как .xlsx.")
+    columns: dict[str, int] = {}
+    rows = []
+    for n, cells in enumerate(_xlsx(data) if name.endswith(".xlsx") else _csv(data), start=1):
+        if columns:
+            values = {col: cells[i] if i < len(cells) else None for col, i in columns.items()}
+            if any(_text(v) for v in values.values()):
+                rows.append((n, values))
+            if len(rows) > MAX_ROWS:
+                raise FileProblem(
+                    f"В файле больше {MAX_ROWS} новичков. Разделите список на несколько файлов."
+                )
+            continue
+        if n > HEADER_ROWS:
+            break
+        found = {}
+        for i, cell in enumerate(cells):
+            col = HEADERS.get(_key(cell))
+            if col and col not in found:
+                found[col] = i
+        if len(found) >= 2:
+            missing = [COLUMNS[col] for col in REQUIRED if col not in found]
+            if missing:
+                raise FileProblem(f"В файле нет колонок: {', '.join(missing)}. Сверьте заголовки с шаблоном.")
+            columns = found
+    if not columns:
+        raise FileProblem(
+            "Не нашли строку с заголовками колонок. Скачайте шаблон и перенесите данные в него."
+        )
+    if not rows:
+        raise FileProblem("В файле нет строк с новичками.")
+    return rows
 
 
 # --- проверка записей --------------------------------------------------------------------------------
@@ -243,6 +348,67 @@ async def apply(s: AsyncSession, plans: list[Plan]) -> None:
             ) from e
         if replan:
             await schedule_employee(s, p.employee)
+
+
+# --- панель HR ---------------------------------------------------------------------------------------
+
+router = APIRouter(prefix="/api/employees/import", dependencies=[Depends(auth)])
+
+
+async def _upload(s: AsyncSession, file: UploadFile) -> list[Plan]:
+    data = await file.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise HTTPException(413, "Файл больше 5 МБ. Оставьте в нём только новичков и загрузите ещё раз.")
+    try:
+        return await plan_rows(s, read_file(file.filename or "", data))
+    except FileProblem as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@router.post("/preview")
+async def preview(file: UploadFile = File(...), s: AsyncSession = Depends(get_session)):
+    plans = await _upload(s, file)
+    return {"rows": [plan_view(p) for p in plans], "counts": counts(plans)}
+
+
+@router.post("")
+async def load(file: UploadFile = File(...), s: AsyncSession = Depends(get_session)):
+    plans = await _upload(s, file)
+    await apply(s, plans)
+    return counts(plans)
+
+
+@router.get("/template.xlsx")
+async def template(s: AsyncSession = Depends(get_session)):
+    sites = (await s.scalars(select(Site).order_by(Site.code))).all()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Новички"
+    ws.append(list(COLUMNS.values()))
+    for cell, width in zip(ws[1], (18, 34, 26, 26, 30, 14, 26, 26), strict=True):
+        cell.font = Font(bold=True)
+        ws.column_dimensions[cell.column_letter].width = width
+    ws.freeze_panes = "A2"
+    for row in range(2, MAX_ROWS + 2):
+        ws.cell(row, 1).number_format = "@"  # текст: Excel не съест ведущие нули табельного номера
+        ws.cell(row, 6).number_format = "DD.MM.YYYY"
+    hints = wb.create_sheet("Как заполнить")
+    hints.append(["Колонка", "Обязательная", "Что указать"])
+    for col, title in COLUMNS.items():
+        hints.append([title, "да" if col in REQUIRED else "нет", HINTS[col]])
+    hints.append([])
+    hints.append(["Площадки", "", "; ".join(f"{x.name} — код {x.code}" for x in sites)])
+    hints.append(
+        ["Повторная загрузка", "", "Пустая ячейка не стирает данные, уже заполненные в панели Корсика"]
+    )
+    hints.column_dimensions["A"].width, hints.column_dimensions["C"].width = 22, 90
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="korsik-newcomers.xlsx"'},
+    )
 
 
 # --- API кадровой системы ----------------------------------------------------------------------------

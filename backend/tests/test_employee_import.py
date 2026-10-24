@@ -1,7 +1,8 @@
-"""Новички из кадровой системы: проверка записей, ключ — табельный номер, перенос даты выхода."""
+"""Новички из файла и API кадровой системы: разбор строк, ключ — табельный номер, перенос даты выхода."""
 
+import io
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -9,10 +10,11 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from openpyxl import Workbook
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.api import hr_import
+from app.api import admin, hr_import
 from app.bot import scenario
 from app.config import settings
 from app.db import Base, get_session
@@ -23,8 +25,66 @@ SITES = {
     "Luzhniki": "Офис «Лужники»",
     "GTP": "Производственная площадка GTP",
 }
+HEADER = [
+    "Табельный номер",
+    "ФИО",
+    "Должность",
+    "Подразделение",
+    "Площадка",
+    "Дата выхода",
+    "Руководитель",
+    "Рекрутер",
+]
 TODAY = date(2026, 10, 24)
 START = date.today() + timedelta(days=30)  # план строится только из будущих шагов
+
+
+def xlsx(rows: list[list]) -> bytes:
+    wb = Workbook()
+    for r in rows:
+        wb.active.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_xlsx_with_report_title_and_typed_cells():
+    data = xlsx(
+        [
+            ["Список принятых сотрудников"],
+            [],
+            HEADER,
+            [123, "Иванова  Анна Сергеевна", "Инженер", "ОТК", "GTP", datetime(2026, 11, 2), None, None],
+            [None] * 8,
+        ]
+    )
+    rows = hr_import.read_file("Выгрузка.xlsx", data)
+    assert [n for n, _ in rows] == [4]
+    plan = hr_import.check_rows(rows, SITES, [], {}, TODAY)[0]
+    assert plan.status == "new" and plan.personnel_number == "123"
+    assert plan.full_name == "Иванова Анна Сергеевна" and plan.start_date == date(2026, 11, 2)
+
+
+def test_csv_from_1c_in_windows_1251():
+    raw = "Таб. №;ФИО;Площадка;Дата приёма\n000123;Петрова Мария;Офис «Лужники»;02.11.2026 0:00:00\n"
+    rows = hr_import.read_file("export.csv", raw.encode("cp1251"))
+    plan = hr_import.check_rows(rows, SITES, [], {}, TODAY)[0]
+    assert plan.status == "new" and plan.personnel_number == "000123"
+    assert plan.site_code == "Luzhniki" and plan.start_date == date(2026, 11, 2)
+
+
+@pytest.mark.parametrize(
+    ("name", "data", "problem"),
+    [
+        ("x.csv", "Табельный номер;ФИО;Площадка\n1;Иванова Анна;GTP\n".encode(), "Дата выхода"),
+        ("x.csv", "Имя;Телефон\nАнна;123\n".encode(), "заголовками"),
+        ("x.xls", b"old", ".xlsx"),
+        ("x.xlsx", b"not a zip", "Excel"),
+    ],
+)
+def test_file_problems_are_explained(name, data, problem):
+    with pytest.raises(hr_import.FileProblem, match=problem):
+        hr_import.read_file(name, data)
 
 
 def row(n, number, name, site, start, manager=None, recruiter=None):
@@ -95,7 +155,9 @@ async def db():
 
 async def call(db, method: str, path: str, **kw) -> httpx.Response:
     app = FastAPI()
+    app.include_router(hr_import.router)
     app.include_router(hr_import.hr_router)
+    app.dependency_overrides[admin.auth] = lambda: None
 
     async def session_override():
         async with db.session() as s:
@@ -109,6 +171,26 @@ async def call(db, method: str, path: str, **kw) -> httpx.Response:
 async def count(db, model) -> int:
     async with db.session() as s:
         return await s.scalar(select(func.count()).select_from(model))
+
+
+@pytest.mark.asyncio
+async def test_same_file_twice_creates_no_duplicates(db):
+    rows = [
+        [f"{n:06}", f"Демо{n} Анна", "Оператор", "", "GTP", START, "Игорь Волков", "Мария Кузнецова"]
+        for n in range(1, 11)
+    ]
+    files = {"file": ("Новички.xlsx", xlsx([HEADER, *rows]))}
+    preview = (await call(db, "POST", "/api/employees/import/preview", files=files)).json()
+    assert preview["counts"] == {"new": 10, "update": 0, "unchanged": 0, "error": 0}
+    assert (await call(db, "POST", "/api/employees/import", files=files)).json()["new"] == 10
+    jobs = await count(db, Job)
+    assert jobs > 0
+    again = (await call(db, "POST", "/api/employees/import", files=files)).json()
+    assert again == {"new": 0, "update": 0, "unchanged": 10, "error": 0}
+    assert await count(db, Employee) == 10 and await count(db, Job) == jobs
+    async with db.session() as s:
+        emp = await s.scalar(select(Employee).where(Employee.personnel_number == "000001"))
+        assert emp.first_name == "Анна" and emp.manager.name == "Игорь Волков" and emp.status == "invited"
 
 
 @pytest.mark.asyncio
@@ -172,3 +254,11 @@ async def test_hr_system_api_has_its_own_key(db, monkeypatch):
         db, "POST", "/api/hr-system/employees", json=body, headers={"Authorization": "Bearer test-key"}
     )
     assert ok.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_template_headers_are_recognized(db):
+    template = await call(db, "GET", "/api/employees/import/template.xlsx")
+    assert template.status_code == 200
+    with pytest.raises(hr_import.FileProblem, match="нет строк"):
+        hr_import.read_file("Шаблон.xlsx", template.content)
