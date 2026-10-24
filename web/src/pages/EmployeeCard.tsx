@@ -13,6 +13,7 @@ import {
   type TimelineStep,
 } from '../api'
 import ChatPhone from '../components/ChatPhone'
+import SupportNote from '../components/SupportNote'
 import TeamPicker from '../components/TeamPicker'
 import {
   Avatar,
@@ -74,6 +75,7 @@ export default function EmployeeCard() {
               <QrCode size={16} /> QR-приглашение
             </Btn>
           </div>
+          <SupportNote empId={e.id} name={e.full_name} onSent={refresh} />
           <div className="mt-5">
             {e.status === 'invited' ? (
               <div className="rounded-xl bg-sky-50 px-4 py-3 text-sm text-sky-900">

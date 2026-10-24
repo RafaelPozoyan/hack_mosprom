@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.channels.base import Button, InEvent, OutMessage
 from app.channels.max import max_client
 from app.config import settings
+from app.db import after_commit
 from app.models import Employee, MaxDelivery, Message, Staff
 
 log = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ async def log_incoming(s: AsyncSession, emp: Employee, text: str, payload: dict 
     m = Message(employee_id=emp.id, direction="in", author="employee", text=text, payload=payload or {})
     s.add(m)
     await s.commit()
-    hub.publish(emp.id, {"type": "message", "message": message_view(m)})
+    after_commit(s, hub.publish, emp.id, {"type": "message", "message": message_view(m)})
     return m
 
 
@@ -89,7 +90,7 @@ async def send(
     if recipient:
         s.add(MaxDelivery(message_id=m.id, user_id=recipient))
     await s.commit()
-    hub.publish(emp.id, {"type": "message", "message": message_view(m)})
+    after_commit(s, hub.publish, emp.id, {"type": "message", "message": message_view(m)})
     return m
 
 
@@ -108,7 +109,7 @@ async def edit(s: AsyncSession, emp: Employee, m: Message, msg: OutMessage) -> N
     elif emp.channel == "max" and emp.max_user_id and m.max_mid:
         s.add(MaxDelivery(message_id=m.id, user_id=emp.max_user_id))
     await s.commit()
-    hub.publish(emp.id, {"type": "edit", "message": message_view(m)})
+    after_commit(s, hub.publish, emp.id, {"type": "edit", "message": message_view(m)})
 
 
 async def notify_staff(staff: Staff | None, msg: OutMessage, *, raise_errors: bool = False) -> bool:

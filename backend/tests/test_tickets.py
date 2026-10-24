@@ -1,4 +1,4 @@
-"""Жизненный цикл обращений HR: ошибки API и повторные действия не меняют закрытый диалог."""
+"""Жизненный цикл обращений HR: ошибки API и повторные действия не меняют закрытый диалог и не плодят новые."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -17,6 +17,7 @@ from app.db import get_session
 
 class FakeSession:
     def __init__(self, ticket):
+        self.info = {}
         self.ticket = ticket
         self.commits = 0
 
@@ -42,7 +43,15 @@ def case(monkeypatch):
         start_date=datetime(2026, 10, 26),
         state={"survey": {"id": "day3"}},
     )
-    ticket = SimpleNamespace(id=7, employee_id=1, employee=emp, kind="problem", status="open", closed_at=None)
+    ticket = SimpleNamespace(
+        id=7,
+        employee_id=1,
+        employee=emp,
+        kind="problem",
+        subject="Вопрос сотрудника: где получить пропуск?",
+        status="open",
+        closed_at=None,
+    )
     send, post, publish = AsyncMock(), AsyncMock(), Mock()
     monkeypatch.setattr(escalation.channels, "send", send)
     monkeypatch.setattr(escalation.channels, "post_hr_chat", post)
@@ -143,3 +152,31 @@ def test_max_reply_respects_ticket_status(case, monkeypatch, closed):
         assert case.send.await_args.args[2].text == "💬 Мария:\nПоможем с доступами"
         assert case.emp.state["ticket_id"] == 7
         case.post.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("subject", "forwarded"),
+    [("Вопрос сотрудника: где получить пропуск?", False), ("Вопрос сотрудника: где столовая?", True)],
+)
+def test_open_dialog_does_not_duplicate_ticket(case, monkeypatch, subject, forwarded):
+    case.emp.state["ticket_id"] = 7
+    create = AsyncMock()
+    monkeypatch.setattr(escalation, "create_ticket", create)
+    t = asyncio.run(escalation.open_dialog(case.session, case.emp, subject, kind="question"))
+    assert t is case.ticket
+    create.assert_not_awaited()  # повторное нажатие кнопки — то же обращение, без второго уведомления рекрутеру
+    assert case.post.await_count == int(forwarded)  # новый вопрос — в тот же диалог HR
+    case.send.assert_awaited_once()
+    assert case.send.await_args.kwargs["ticket_id"] == 7
+
+
+def test_open_dialog_after_closed_ticket_creates_new(case, monkeypatch):
+    case.emp.state["ticket_id"] = 7
+    case.ticket.status = "closed"
+    create = AsyncMock(return_value=SimpleNamespace(id=8))
+    monkeypatch.setattr(escalation, "create_ticket", create)
+    asyncio.run(
+        escalation.open_dialog(case.session, case.emp, "Вопрос сотрудника: где столовая?", kind="question")
+    )
+    create.assert_awaited_once()
+    assert case.emp.state["ticket_id"] == 8

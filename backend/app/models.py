@@ -68,10 +68,14 @@ class Employee(Base):
     state: Mapped[dict] = mapped_column(JSONB, default=dict)  # текущий опрос/ожидание ввода
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # табельный номер из кадровой системы — ключ загрузки из файла и API; у добавленных вручную пусто
+    personnel_number: Mapped[str | None] = mapped_column(String(50))
 
     site: Mapped[Site] = relationship(lazy="joined")
     manager: Mapped[Staff | None] = relationship(foreign_keys=[manager_id], lazy="joined")
     recruiter: Mapped[Staff | None] = relationship(foreign_keys=[recruiter_id], lazy="joined")
+
+    __table_args__ = (Index("ix_employees_personnel_number", "personnel_number", unique=True),)
 
 
 class Job(Base):
@@ -80,7 +84,7 @@ class Job(Base):
     __tablename__ = "jobs"
     id: Mapped[int] = mapped_column(primary_key=True)
     employee_id: Mapped[int | None] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
-    # step | reminder | required_reminder | required_escalation | digest | handoff
+    # step | reminder | required_reminder | required_escalation | digest | handoff | response_due
     kind: Mapped[str] = mapped_column(String(20), default="step")
     ref: Mapped[str] = mapped_column(String(100))  # id шага / опроса
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -178,6 +182,18 @@ class Ticket(Base):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     employee: Mapped[Employee] = relationship(lazy="joined")
+
+
+class TicketDeadline(Base):
+    """Срок первого ответа HR по обращению и отметки уведомлений: каждое отправляется не больше одного раза."""
+
+    __tablename__ = "ticket_deadlines"
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"), primary_key=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    urgent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # срочное — HR-руководителю
+    overdue_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # о просрочке — ему же
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # напоминание рекрутеру
+    reminder_delivered: Mapped[bool | None] = mapped_column()  # дошло ли оно в MAX; None — ещё отправляется
 
 
 class Document(Base):

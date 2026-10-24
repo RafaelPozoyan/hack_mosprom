@@ -238,6 +238,19 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
             select(Job).where(Job.employee_id == emp.id, Job.kind == "step", Job.status == "await_start")
         )
     }
+    # Перенос даты выхода не повторяет шаг, который уже ушёл, выполняется или ждёт обязательного ответа.
+    kept = set(
+        await s.scalars(
+            select(Job.ref).where(
+                Job.employee_id == emp.id, Job.kind == "step", Job.status.in_(["done", "running", "blocked"])
+            )
+        )
+    )
+    kept |= set(
+        await s.scalars(
+            select(Message.step_id).where(Message.employee_id == emp.id, Message.step_id.is_not(None))
+        )
+    )
     await s.execute(
         update(Job)
         .where(Job.employee_id == emp.id, Job.status == "pending", Job.kind == "step")
@@ -256,7 +269,7 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
                 job.status, job.error = "pending", None
             n += 1
             continue
-        if run_at < now:
+        if run_at < now or st["id"] in kept:
             continue
         s.add(Job(employee_id=emp.id, kind="step", ref=st["id"], run_at=run_at))
         n += 1
@@ -307,19 +320,20 @@ async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
 
 
 async def notify_audience(
-    s: AsyncSession, emp: Employee, audience: str, text: str, step_id: str | None
-) -> None:
-    """Push руководителю/рекрутеру: в MAX, если он подключён, и всегда — в журнал карточки сотрудника."""
+    s: AsyncSession, emp: Employee, audience: str, text: str, step_id: str | None, **extra
+) -> Message:
+    """Push руководителю/рекрутеру: в MAX, если он подключён, и всегда — в журнал карточки сотрудника.
+    extra — пометки в журнале (например, какую рекомендацию выбрал HR)."""
     staff = emp.manager if audience == "manager" else emp.recruiter
     delivered = await channels.notify_staff(staff, OutMessage(text=f"🐾 Корсик · {emp.full_name}\n\n{text}"))
-    s.add(
-        Message(
-            employee_id=emp.id,
-            direction="out",
-            author=f"to_{audience}",
-            text=text,
-            step_id=step_id,
-            payload={"delivered": delivered, "staff": staff.name if staff else None},
-        )
+    m = Message(
+        employee_id=emp.id,
+        direction="out",
+        author=f"to_{audience}",
+        text=text,
+        step_id=step_id,
+        payload={"delivered": delivered, "staff": staff.name if staff else None, **extra},
     )
+    s.add(m)
     await s.commit()
+    return m

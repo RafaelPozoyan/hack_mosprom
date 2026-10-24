@@ -14,17 +14,17 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text, update
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.bot import dialog
+from app.bot import dialog, response_time
 from app.bot.scenario import add_months, next_workday, schedule_employee, step, step_run_at
 from app.channels import InEvent
 from app.config import settings
 from app.db import init_db, session
 from app.main import seed_sites
-from app.models import Document, Employee, Staff
+from app.models import Document, Employee, Job, Staff, Ticket, TicketDeadline
 from app.rag.ingest import ingest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -184,6 +184,15 @@ async def max_ids(s) -> dict[str, int]:
 async def backdate(s, before: dict[str, int], at: datetime) -> None:
     for t in TABLES:
         await s.execute(text(f"UPDATE {t} SET created_at = :at WHERE id > :id"), {"at": at, "id": before[t]})
+    # Срок первого ответа HR отсчитывается от сдвинутого времени обращения, как будто оно пришло тогда.
+    for t in (await s.scalars(select(Ticket).where(Ticket.id > before["tickets"]))).all():
+        due = response_time.deadline(at, t.severity, ZoneInfo(t.employee.site.tz))
+        await s.execute(update(TicketDeadline).where(TicketDeadline.ticket_id == t.id).values(due_at=due))
+        await s.execute(
+            update(Job)
+            .where(Job.kind == response_time.KIND, Job.ref == str(t.id), Job.status == "pending")
+            .values(run_at=func.least(Job.run_at, due))
+        )
     await s.commit()
 
 
