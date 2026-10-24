@@ -8,14 +8,19 @@ import { Btn, Modal } from './ui'
 
 type Props = { empId: number; name: string; onSent: () => void }
 
-/** Тревожные сигналы новичка в шапке карточки и одно действие — подключить руководителя.
- *  Можно ли подключить, решает сервер; здесь причина отказа видна заранее. */
-export default function SupportNote({ empId, name, onSent }: Props) {
-  const { data } = useQuery({
+/** Причины тревоги новичка за месяц и можно ли подключить руководителя. Тот же ответ сервера читает вкладка
+ *  «Что беспокоит» — срочность причин там такая же, как в шапке. */
+export const useSupport = (empId: number) =>
+  useQuery({
     queryKey: ['employee-support', empId],
     queryFn: () => api.get<EmployeeSupport>(`/api/employees/${empId}/support`),
     refetchInterval: 15_000,
   })
+
+/** Тревожные сигналы новичка в шапке карточки и одно действие — подключить руководителя.
+ *  Можно ли подключить, решает сервер; здесь причина отказа видна заранее. */
+export default function SupportNote({ empId, name, onSent }: Props) {
+  const { data } = useSupport(empId)
   const [open, setOpen] = useState(false)
   const [delivered, setDelivered] = useState<boolean | null>(null)
   if (!data?.reasons.length) return null

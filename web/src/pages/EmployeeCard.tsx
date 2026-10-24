@@ -26,13 +26,15 @@ import {
   fmtDateTime,
   probationDay,
   withToken,
+  type AnalysisItem,
   type Employee,
   type EmployeeCardData,
+  type SupportReason,
   type Ticket,
   type TimelineStep,
 } from '../api'
 import ChatPhone from '../components/ChatPhone'
-import SupportNote from '../components/SupportNote'
+import SupportNote, { useSupport } from '../components/SupportNote'
 import TeamPicker from '../components/TeamPicker'
 import {
   Avatar,
@@ -41,8 +43,6 @@ import {
   Card,
   Empty,
   Progress,
-  SENTIMENT,
-  SEVERITY,
   TICKET_KIND,
   Tabs,
   plural,
@@ -65,13 +65,12 @@ export default function EmployeeCard() {
     queryFn: () => api.get<EmployeeCardData>(`/api/employees/${id}`),
     refetchInterval: 10_000,
   })
+  const { data: support } = useSupport(Number(id))
   const refresh = useCallback(() => qc.invalidateQueries({ queryKey: ['employee', id] }), [qc, id])
   if (!data) return null
   const e = data.employee
   const { day, total } = probationDay(e)
-  const concerns =
-    data.analyses.filter((a) => a.severity !== 'low').length +
-    data.surveys.flatMap((g) => g.items).filter((i) => i.flag).length
+  const concerns = concernsOf(data, support?.reasons ?? [])
   const openTickets = data.tickets.filter((t) => t.status === 'open').length
 
   return (
@@ -126,7 +125,7 @@ export default function EmployeeCard() {
           items={[
             { id: 'journey', label: 'Путь адаптации' },
             { id: 'surveys', label: 'Опросы' },
-            { id: 'signals', label: 'Сигналы', count: concerns },
+            { id: 'signals', label: 'Что беспокоит', count: concerns.items.length },
             { id: 'tickets', label: 'Обращения', count: openTickets },
           ]}
         />
@@ -135,7 +134,7 @@ export default function EmployeeCard() {
           <Journey steps={data.timeline} empId={e.id} active={e.status === 'active'} onDone={refresh} />
         )}
         {tab === 'surveys' && <Surveys data={data} />}
-        {tab === 'signals' && <Signals data={data} />}
+        {tab === 'signals' && <Signals data={data} {...concerns} />}
         {tab === 'tickets' && <TicketsTab data={data} />}
       </div>
 
@@ -156,9 +155,11 @@ export default function EmployeeCard() {
 
 // --- нужно ваше действие -----------------------------------------------------------------------------
 
+/** Плановое время шага ещё не пришло. */
+const early = (t: TimelineStep) => !!t.run_at && Date.parse(t.run_at) > Date.now()
+
 /** Шаг «по вашей команде», время которого пришло: его кнопки — в блоке «Нужно ваше действие», а не в ленте. */
-const awaitsHr = (t: TimelineStep) =>
-  t.manual && t.status === 'manual' && (!t.run_at || Date.parse(t.run_at) <= Date.now())
+const awaitsHr = (t: TimelineStep) => t.manual && t.status === 'manual' && !early(t)
 
 /** Тема обращения из опроса приходит как «вопрос → ответ»; HR важнее слова самого новичка. */
 const ownWords = (subject: string) => subject.slice(subject.lastIndexOf('→') + 1).trim()
@@ -524,7 +525,6 @@ function Step({
   const st = STATUS[t.status] ?? STATUS.pending
   const Icon = st.icon
   const hr = awaitsHr(t)
-  const early = !!t.run_at && Date.parse(t.run_at) > Date.now()
   const onHover = 'opacity-0 transition group-hover:opacity-100 focus-within:opacity-100'
   return (
     <li className="group flex items-start gap-3 border-b border-ink/[0.05] py-2.5 last:border-0">
@@ -545,7 +545,7 @@ function Step({
       </div>
       <div className="flex shrink-0 items-center gap-3">
         {active && t.manual && !passed(t) && !hr && (
-          <span className={clsx('flex gap-2', early && onHover)}>
+          <span className={clsx('flex gap-2', early(t) && onHover)}>
             {t.step_id === 'd3_plan' && <AttachPlan small run={run} busy={busy} variant="ghost" />}
             <Btn small onClick={() => run()} disabled={busy}>
               Отправить
@@ -608,53 +608,118 @@ function Surveys({ data }: { data: EmployeeCardData }) {
   )
 }
 
-function Signals({ data }: { data: EmployeeCardData }) {
-  const items = [...data.analyses].sort(
-    (a, b) => Number(b.severity === 'high') - Number(a.severity === 'high'),
+/** Тревожный сигнал: ответ в опросе с флагом или сообщение, которое Корсик при разборе счёл тревожным.
+ *  Те же сигналы, что сервер показывает в шапке карточки и в списке сотрудников (metrics.risk_signals). */
+type Concern = {
+  flags: string[]
+  question?: string
+  text: string
+  summary?: string
+  urgent: boolean
+  source: string
+  at: string
+}
+
+/** Срочные первыми, затем свежие. Срочность — как в шапке карточки: высокая важность при разборе или причина,
+ *  которую сервер пометил срочной (политика analytics.high в сценарии). Ответ опроса, который Корсик разобрал как
+ *  тревожный, показываем один раз — разбором с выводом; спокойные разборы уходят под «Ещё N спокойных». */
+function concernsOf(data: EmployeeCardData, reasons: SupportReason[]) {
+  const urgent = new Set(reasons.filter((r) => r.urgent).map((r) => r.reason))
+  const tense = data.analyses.filter((a) => a.severity !== 'low')
+  const covered = new Set(tense.map((a) => a.text))
+  const answers = data.surveys.flatMap((g) =>
+    g.items
+      .filter((i) => i.flag && !(i.comment && covered.has(i.comment)))
+      .map((i) => ({
+        flags: [i.flag!],
+        question: i.question.replace(/^(Вопрос\s*\d+\s*[:.]|\d+\s*[.)])\s*/, ''), // без «Вопрос 3:» и «1)»
+        text: i.comment || i.answer,
+        urgent: urgent.has(i.flag!),
+        source: 'из опроса',
+        at: g.at,
+      })),
   )
+  const messages = tense.map((a) => ({
+    flags: a.risk_flags,
+    text: a.text,
+    summary: a.summary,
+    urgent: a.severity === 'high' || a.risk_flags.some((f) => urgent.has(f)),
+    source: a.source === 'survey' ? 'из опроса' : 'из сообщения',
+    at: a.at,
+  }))
+  const shown = new Set(answers.map((c) => c.text))
+  const items: Concern[] = [...messages, ...answers].sort(
+    (a, b) => Number(b.urgent) - Number(a.urgent) || Date.parse(b.at) - Date.parse(a.at),
+  )
+  return { items, calm: data.analyses.filter((a) => a.severity === 'low' && !shown.has(a.text)) }
+}
+
+function Signals({ data, items, calm }: { data: EmployeeCardData; items: Concern[]; calm: AnalysisItem[] }) {
   return (
     <div className="flex flex-col gap-4">
       <Card
         title="Что заметил Корсик"
-        subtitle="Корсик читает свободные ответы и сообщения новичка и выделяет, что его беспокоит"
+        subtitle="Тревожные ответы в опросах и сообщения новичка, важное — первым"
       >
         {items.length === 0 ? (
-          <Empty>Пока нечего анализировать</Empty>
+          <Empty>
+            Ничего тревожного
+            {calm.length === 0 && (
+              <span className="text-xs text-ink/40">
+                Если {data.employee.first_name} ответит тревожно в опросе или в чате, это появится здесь
+              </span>
+            )}
+          </Empty>
         ) : (
           <div className="flex flex-col gap-3">
-            {items.map((a, i) => (
+            {items.map((c, i) => (
               <div
                 key={i}
                 className={clsx(
                   'rounded-2xl border p-4',
-                  a.severity === 'high' ? 'border-rose-200 bg-rose-50/40' : 'border-ink/[0.07]',
+                  c.urgent ? 'border-rose-200 bg-rose-50/40' : 'border-ink/[0.07]',
                 )}
               >
-                <div className="text-sm">«{a.text}»</div>
-                <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs">
-                  <span className="text-ink/45">Настроение:</span>
-                  <Badge tone={SENTIMENT[a.sentiment]?.tone}>{SENTIMENT[a.sentiment]?.label}</Badge>
-                  {a.risk_flags.map((f) => (
-                    <Badge key={f} tone="red">
-                      {f}
-                    </Badge>
-                  ))}
-                  {a.topics
-                    .filter((t) => t !== 'другое')
-                    .map((t) => (
-                      <Badge key={t}>{t}</Badge>
+                {c.flags.length > 0 && (
+                  <div className="mb-2 flex flex-wrap gap-1.5">
+                    {c.flags.map((f) => (
+                      <Badge key={f} tone={c.urgent ? 'red' : 'amber'}>
+                        {f}
+                      </Badge>
                     ))}
-                </div>
-                {a.summary && <div className="mt-2 text-sm text-ink/60">{a.summary}</div>}
-                <div className="mt-2 flex justify-between text-xs text-ink/40">
-                  <span>{SEVERITY[a.severity]?.label}</span>
+                  </div>
+                )}
+                {c.question && <div className="mb-1 text-xs text-ink/50">{c.question}</div>}
+                <div className="text-sm">«{c.text}»</div>
+                {c.summary && <div className="mt-2 text-sm text-ink/60">{c.summary}</div>}
+                <div className="mt-2 flex justify-between gap-3 text-xs text-ink/40">
+                  <span className="font-medium text-rose-700">{c.urgent && 'срочно'}</span>
                   <span>
-                    {a.source === 'survey' ? 'из опроса' : 'из сообщения'} · {timeAgo(a.at)}
+                    {c.source} · {timeAgo(c.at)}
                   </span>
                 </div>
               </div>
             ))}
           </div>
+        )}
+        {calm.length > 0 && (
+          <details className="group mt-3">
+            <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-[13px] text-ink/55 select-none hover:text-ink/80">
+              {items.length ? 'Ещё' : 'Показать'} {calm.length}{' '}
+              {plural(calm.length, 'спокойное', 'спокойных', 'спокойных')}
+              <ChevronDown size={14} className="transition group-open:rotate-180" />
+            </summary>
+            <div className="mt-1 flex flex-col divide-y divide-ink/[0.05]">
+              {calm.map((a, i) => (
+                <div key={i} className="flex items-start justify-between gap-4 py-2.5 text-sm">
+                  <span className="text-ink/70">«{a.text}»</span>
+                  <span className="shrink-0 text-xs text-ink/40">
+                    {a.source === 'survey' ? 'из опроса' : 'из сообщения'} · {timeAgo(a.at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
         )}
       </Card>
       <Card title="Кого Корсик уведомил">
