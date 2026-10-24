@@ -4,6 +4,7 @@ import { BookOpen, Inbox, LayoutDashboard, Map, Smile, Users } from 'lucide-reac
 import { useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router'
 import { api, type Ticket } from './api'
+import AccessGate from './components/AccessGate'
 import { DemoContext } from './components/ui'
 import Dashboard from './pages/Dashboard'
 import DigestPage from './pages/Digest'
@@ -42,12 +43,19 @@ export default function App() {
   return (
     <Routes>
       <Route path="/m/:code/*" element={<ManagerLink />} />
-      <Route path="*" element={<Panel />} />
+      <Route
+        path="*"
+        element={
+          <AccessGate>
+            {(logout, protectedPanel) => <Panel logout={logout} protectedPanel={protectedPanel} />}
+          </AccessGate>
+        }
+      />
     </Routes>
   )
 }
 
-function Panel() {
+function Panel({ logout, protectedPanel }: { logout: () => void; protectedPanel: boolean }) {
   const [role, setRole] = useState<Role>(() => saved('korsik_role', 'hr'))
   const [demo, setDemo] = useState<boolean>(() => saved('korsik_demo', true))
   const { data: open = [] } = useQuery({
@@ -98,6 +106,15 @@ function Panel() {
           </nav>
 
           <div className="mt-auto flex flex-col gap-4">
+            {protectedPanel && (
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded-lg px-3 py-2 text-left text-sm text-white/65 hover:bg-white/[0.06] hover:text-white"
+              >
+                Выйти из панели
+              </button>
+            )}
             <div>
               <div className="mb-1.5 px-2 text-[11px] font-medium tracking-wide text-white/40 uppercase">
                 Вы вошли как
