@@ -10,8 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
 from app.analytics.sentiment import analyze_later
-from app.bot import escalation, surveys
-from app.bot.scenario import button_rows, find_button, render, run_step, scenario, schedule_employee, site_tz
+from app.bot import escalation, progress, surveys
+from app.bot.scenario import (
+    button_rows,
+    find_button,
+    render,
+    run_step,
+    scenario,
+    schedule_employee,
+    site_tz,
+    step,
+)
 from app.channels import Button, InEvent, OutMessage
 from app.models import Employee, Job, Message, Question, SurveyAnswer, Ticket
 from app.rag.answer import answer as rag_answer
@@ -170,6 +179,23 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
     if btn is None:
         return
     _, step_id, idx, *_ = payload.split(":")
+    st = step(step_id, emp.site_code)
+    required = bool(st and st.get("required"))
+    if required:
+        if progress.required_step(emp) != step_id:
+            return
+        value = {"label": btn["text"]}
+        if btn.get("flag"):
+            value["flag"] = btn["flag"]
+        s.add(SurveyAnswer(
+            employee_id=emp.id,
+            survey_id=f"step:{step_id}",
+            question_id=step_id,
+            value=value,
+            flagged=bool(btn.get("flag")),
+        ))
+        await progress.complete(s, emp, step_id)
+        await s.commit()
     if step_id != "menu" and any(btn.get(k) for k in ("set_form", "flag", "goto", "action")):
         # такие кнопки меняют путь новичка: двойной тап или нажатие в старом сообщении не должны срабатывать повторно
         pressed = emp.state.get("pressed", [])
@@ -181,9 +207,10 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
         emp.address_form = btn["set_form"]
         await s.commit()
     if btn.get("flag"):
-        s.add(SurveyAnswer(employee_id=emp.id, survey_id=f"step:{step_id}", question_id=step_id,
-                           value={"label": btn["text"], "flag": btn["flag"]}, flagged=True))
-        await s.commit()
+        if not required:
+            s.add(SurveyAnswer(employee_id=emp.id, survey_id=f"step:{step_id}", question_id=step_id,
+                               value={"label": btn["text"], "flag": btn["flag"]}, flagged=True))
+            await s.commit()
         from app.analytics.sentiment import react
 
         await react(s, emp, [btn["flag"]], "medium", f"Ответ на шаг «{step_id}»: {btn['text']}")

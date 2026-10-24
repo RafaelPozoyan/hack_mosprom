@@ -79,7 +79,7 @@ class Job(Base):
     kind: Mapped[str] = mapped_column(String(20), default="step")  # step | reminder | digest | handoff
     ref: Mapped[str] = mapped_column(String(100))  # id шага / опроса
     run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | running | done | cancelled | failed
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending | running | blocked | done | cancelled | failed
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -90,6 +90,7 @@ async def _execute(s, job: Job) -> None:
     from app import channels
     from app.analytics import digest
     from app.bot import escalation, surveys
+    from app.bot.progress import StepBlocked
     from app.bot.scenario import run_step
     from app.channels import OutMessage
 
@@ -109,6 +110,9 @@ async def _execute(s, job: Job) -> None:
             await digest.run(s)
             await ensure_digest_job(s, after=utcnow())
         job.status, job.done_at, job.error = "done", utcnow(), None
+    except StepBlocked as e:
+        job.status, job.error = "blocked", str(e)
+        job.attempts -= 1  # ожидание сотрудника не расходует попытки исполнения
     except Exception as e:
         log.exception("job %s failed", job_id)
         await s.rollback()

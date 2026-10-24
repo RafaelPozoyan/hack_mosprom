@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
 from app.analytics.sentiment import analyze_later, react
-from app.bot.scenario import render, run_step, scenario
+from app.bot import progress
+from app.bot.scenario import render, run_step, scenario, step
 from app.channels import Button, OutMessage
 from app.models import Employee, Job, Message, SurveyAnswer
 
@@ -215,6 +216,13 @@ async def advance(s: AsyncSession, emp: Employee) -> None:
         await _ask(s, emp)
         return
     sdef = survey_def(st["id"])
+    waiting = progress.required_step(emp)
+    waiting_step = step(waiting, emp.site_code) if waiting else None
+    waiting_for_this_survey = waiting_step and any(
+        message.get("survey") == st["id"] for message in waiting_step.get("messages", [])
+    )
+    if waiting_for_this_survey:
+        await progress.complete(s, emp, waiting)
     emp.state = {k: v for k, v in emp.state.items() if k not in ("survey", "await")}
     await s.execute(
         update(Job)
@@ -241,6 +249,13 @@ async def remind(s: AsyncSession, emp: Employee, survey_id: str) -> None:
 
 
 async def resume(s: AsyncSession, emp: Employee) -> None:
-    if emp.state.get("survey"):
-        await _ask(s, emp)
+    if not emp.state.get("survey"):
+        return
+    if (emp.state.get("await") or {}).get("kind") == "survey_comment":
+        await channels.send(s, emp, OutMessage(
+            text=render(COMMENT_PROMPT, emp),
+            buttons=[[Button(SKIP, payload="a:skip_comment")]],
+        ))
+        return
+    await _ask(s, emp)
 

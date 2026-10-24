@@ -242,7 +242,7 @@ async def schedule_employee(s: AsyncSession, emp: Employee) -> int:
 
 
 async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
-    from app.bot import surveys
+    from app.bot import progress, surveys
     from app.bot.dialog import answer_question
 
     st = step(step_id, emp.site_code)
@@ -251,6 +251,12 @@ async def run_step(s: AsyncSession, emp: Employee, step_id: str) -> None:
     audience = st.get("audience", "employee")
     if audience == "employee" and emp.status == "invited":
         return  # бот MAX не может написать первым: пока новичок не открыл бота по QR, шаги для него пропускаем
+    progress.check_step(emp, st)
+    await progress.begin(s, emp, st)
+    survey_id = (emp.state.get("survey") or {}).get("id")
+    if survey_id and any(message.get("survey") == survey_id for message in st.get("messages", [])):
+        await surveys.resume(s, emp)
+        return
     pressed = emp.state.get("pressed", [])
     if any(k.startswith(f"{step_id}:") for k in pressed):
         # шаг отправлен заново (HR запустил вручную) — его кнопки снова активны

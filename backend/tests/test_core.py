@@ -231,6 +231,9 @@ class FakeSession:
     def add(self, x):
         self.added.append(x)
 
+    async def execute(self, statement):
+        pass
+
 
 def test_path_changing_button_fires_once(monkeypatch):
     # двойной тап по «Нет» под вопросом о доступах: один ответ и один push руководителю, а не два
@@ -249,7 +252,7 @@ def test_path_changing_button_fires_once(monkeypatch):
     monkeypatch.setattr(dialog, "find_button", lambda payload, emp: {"text": "Нет", "flag": "нет доступов"})
     monkeypatch.setattr(dialog.channels, "send", fake_send)
     monkeypatch.setattr(sentiment, "react", fake_react)
-    s, e = FakeSession(), emp(id=1, state={})
+    s, e = FakeSession(), emp(id=1, state={"required_step": {"id": "d1_access"}})
     for _ in range(2):
         asyncio.run(dialog.scenario_button(s, e, "b:d1_access:0:0:1"))
     assert sum(isinstance(x, SurveyAnswer) for x in s.added) == 1
