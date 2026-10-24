@@ -24,13 +24,19 @@ type Debug = {
   threshold: number
 }
 
-const REASON: Record<string, string> = {
-  no_hits: 'в документах нет ничего похожего',
-  low_score: 'найденные фрагменты недостаточно похожи на вопрос',
-  not_in_context: 'в найденных фрагментах нет прямого ответа',
-  bad_citation: 'ответ не подтвердился цитатой из документа',
-  unsupported_number: 'число в ответе не нашлось в документе',
-  llm_error: 'языковая модель не ответила',
+// Почему Корсик не ответил сам, простыми словами. Коды — из backend/app/rag/answer.py.
+// missing — ответа нет в документах: HR может загрузить документ, где он есть.
+const REASON: Record<string, { text: string; missing?: boolean }> = {
+  no_hits: { text: 'в документах нет ответа', missing: true },
+  low_score: { text: 'в документах нет ответа', missing: true },
+  not_in_context: { text: 'в документах нет ответа', missing: true },
+  bad_citation: { text: 'ответ не подтвердился цитатой — лучше спросить HR' },
+  unsupported_number: { text: 'в ответе было число, которого нет в документе — лучше спросить HR' },
+  unsupported_contact: {
+    text: 'в ответе была почта или ссылка, которых нет в документе — лучше спросить HR',
+  },
+  llm_error: { text: 'сервис не отвечает — попробуйте через минуту' },
+  search_error: { text: 'сервис не отвечает — попробуйте через минуту' },
 }
 
 export default function Knowledge() {
@@ -199,6 +205,7 @@ function Ask() {
   const [q, setQ] = useState('')
   const [res, setRes] = useState<Debug | null>(null)
   const [busy, setBusy] = useState(false)
+  const why = res ? REASON[res.reason] : undefined
   const run = async (question = q) => {
     if (!question.trim()) return
     setQ(question)
@@ -272,8 +279,8 @@ function Ask() {
             <div className="rounded-2xl bg-amber-50 p-4 text-sm">
               <div className="font-medium">Корсик не станет отвечать сам и предложит передать вопрос HR</div>
               <div className="mt-1 text-ink/60">
-                Причина: {REASON[res.reason] ?? res.reason}. Если ответ должен быть — загрузите документ, где
-                он есть.
+                Причина: {why?.text ?? 'не удалось подобрать надёжный ответ'}.
+                {why?.missing && ' Если ответ должен быть — загрузите документ, где он есть.'}
               </div>
             </div>
           )}
