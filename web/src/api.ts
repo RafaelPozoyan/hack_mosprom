@@ -104,7 +104,9 @@ export const api = {
 
 export const withToken = (path: string) => (token() ? `${path}?token=${token()}` : path)
 
-export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
+// Время для людей — всегда по Москве, а не по часам браузера (у HR в другом поясе или в контейнере записи демо — иначе)
+export const fmtDate = (iso: string) => new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Moscow' })
+export const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' })
 export const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow' })
 
