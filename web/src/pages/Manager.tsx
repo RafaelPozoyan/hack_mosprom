@@ -105,7 +105,7 @@ export function ManagerCard({ code }: { code: string }) {
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-sm text-ink/70">
-              Проведите короткую встречу 1:1 в ближайшие дни. Что стоит обсудить:
+              Проведите короткую личную встречу в ближайшие дни. Что стоит обсудить:
             </p>
             {data.signals.map((s) => (
               <div key={s} className="rounded-xl bg-amber-50 px-3 py-2 text-sm first-letter:uppercase">
@@ -119,7 +119,7 @@ export function ManagerCard({ code }: { code: string }) {
         <Card
           title={
             <span className="flex items-center gap-2">
-              <CalendarClock size={17} /> Что дальше
+              <CalendarClock size={17} /> Что Корсик сделает дальше
             </span>
           }
         >
