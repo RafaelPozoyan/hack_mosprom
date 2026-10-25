@@ -287,7 +287,7 @@ async def poll_loop() -> None:
                 pending = path.with_suffix(".tmp")
                 pending.write_text(str(next_marker))
                 pending.replace(path)
-            marker = next_marker
+                marker = next_marker
         except Exception:
             log.exception("MAX polling failed")
             await asyncio.sleep(5)

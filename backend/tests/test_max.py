@@ -141,3 +141,33 @@ def test_poll_retries_same_batch_after_queue_failure(tmp_path, monkeypatch):
     assert requested == [10, 10, 20]
     assert enqueued == [1, 2, 1, 2]
     assert _load_marker() == 20
+
+
+def test_poll_null_marker_preserves_known_position(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.bot import inbox, updates
+
+    monkeypatch.setattr(settings(), "data_dir", tmp_path)
+    _marker_file().write_text("10")
+    requested = []
+
+    async def poll(marker):
+        requested.append(marker)
+        if len(requested) == 1:
+            return [], None
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(inbox, "enqueue", AsyncMock())
+    monkeypatch.setattr(updates, "max_client", lambda: SimpleNamespace(poll=poll))
+
+    async def run():
+        try:
+            await updates.poll_loop()
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert requested == [10, 10]
+    assert _load_marker() == 10
