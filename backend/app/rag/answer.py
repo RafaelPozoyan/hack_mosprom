@@ -154,10 +154,9 @@ async def answer(s: AsyncSession, question: str, site: str = "", form: str = "т
     if key in _answers:
         return _answers[key]
     res = await _answer(s, question, site, form)
-    if res.reason not in (
-        "search_error",
-        "llm_error",
-    ):  # сбой сервиса не запоминаем: следующий раз — новая попытка
+    # Запоминаем ответ и отказ поиска — при той же базе они повторятся. Отказ проверки ответа модели
+    # и сбой сервиса — нет: следующая попытка может пройти, а отказ не должен достаться всем, кто спросит.
+    if res.answered or res.reason in ("no_hits", "low_score"):
         if len(_answers) >= ANSWER_CACHE_SIZE:
             _answers.clear()
         _answers[key] = res
