@@ -52,7 +52,9 @@ class Settings(BaseSettings):
     # RRF k=60 — константа из статьи Cormack et al., 2009 (Reciprocal Rank Fusion).
     rrf_k: int = 60
     retrieve_candidates: int = 30
-    rerank_candidates: int = 20  # eval: гибридный поиск находит нужный фрагмент в топ-20 в 100% случаев
+    # eval: при 10 кандидатах Hit@1/3/5 и MRR после реранкера те же, что при 20, а реранкер на CPU быстрее
+    # в 2,7 раза (6,8 → 2,5 с на вопрос) — демо выдерживает 5–10 человек одновременно
+    rerank_candidates: int = 10
     rerank_top_n: int = (
         3  # eval: Hit@3 = Hit@5 (97%) — больше источников в промпте не дают качества, только задержку
     )
