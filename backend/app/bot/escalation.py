@@ -196,7 +196,7 @@ async def ask_relay(s: AsyncSession, emp: Employee) -> None:
     )
 
 
-async def forward_from_employee(s: AsyncSession, emp: Employee, text: str) -> None:
+async def forward_from_employee(s: AsyncSession, emp: Employee, text: str, confirm: bool = False) -> None:
     t = await s.get(Ticket, emp.state["ticket_id"])
     if not t or t.status != "open":
         emp.state = {k: v for k, v in emp.state.items() if k != "ticket_id"}
@@ -204,6 +204,21 @@ async def forward_from_employee(s: AsyncSession, emp: Employee, text: str) -> No
         return
     await channels.post_hr_chat(OutMessage(text=f"✉️ #{t.id} · {emp.full_name}:\n{text}"))
     after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_message", "id": t.id})
+    if confirm:
+        # Пока диалог открыт, вопросы идут HR, а не Корсику: без ответа новичок решит, что бот завис
+        await channels.send(
+            s,
+            emp,
+            OutMessage(
+                text=render(
+                    "Переслал HR — ответ придёт сюда же, в этот чат 🙌 "
+                    "Чтобы снова спрашивать меня, {нажми|нажмите} «↩️ Вернуться к Корсику».",
+                    emp,
+                ),
+                buttons=[[Button("↩️ Вернуться к Корсику", payload="a:close_dialog")]],
+            ),
+            ticket_id=t.id,
+        )
 
 
 async def hr_reply(s: AsyncSession, t: Ticket, text: str, author: str = "HR") -> None:

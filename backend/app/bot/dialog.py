@@ -125,7 +125,7 @@ async def on_text(s: AsyncSession, emp: Employee, text: str) -> None:
             ),
         )
     elif emp.state.get("ticket_id"):
-        await escalation.forward_from_employee(s, emp, text)
+        await escalation.forward_from_employee(s, emp, text, confirm=True)
     elif is_smalltalk(text):
         await send_menu(s, emp, intro=render("Я здесь 🐾 ", emp))
     else:
