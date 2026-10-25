@@ -18,9 +18,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app import channels, scheduler
 from app.api import admin, team
 from app.bot import escalation
+from app.channels import notifications
 from app.config import settings
 from app.db import Base, get_session
-from app.models import Employee, Job, Message, Site, Staff, Ticket, TicketDeadline
+from app.models import Employee, Job, MaxNotification, Message, Site, Staff, Ticket, TicketDeadline
 
 
 @pytest_asyncio.fixture
@@ -44,7 +45,11 @@ async def db(monkeypatch):
                 Message.__table__,
                 TicketDeadline.__table__,
             ]
-            await c.run_sync(lambda conn: Base.metadata.create_all(conn, tables=[*tables, Job.__table__]))
+            await c.run_sync(
+                lambda conn: Base.metadata.create_all(
+                    conn, tables=[*tables, Job.__table__, MaxNotification.__table__]
+                )
+            )
         async with factory() as s:
             s.add(Site(code="GTP", name="Демо"))
             s.add(Staff(id=1, name="Анна Смирнова", role="hr", invite_code="staff-hr"))
@@ -147,7 +152,7 @@ async def test_assignment_accepts_only_matching_roles(db):
 @pytest.mark.asyncio
 async def test_new_escalation_goes_to_reassigned_recruiter(db, monkeypatch):
     client = SimpleNamespace(send=AsyncMock(return_value="card-mid"))
-    monkeypatch.setattr(channels, "max_client", lambda: client)
+    monkeypatch.setattr(notifications, "max_client", lambda: client)
     monkeypatch.setattr(channels, "settings", lambda: SimpleNamespace(max_hr_chat_id=99))
     card = escalation.Handoff(summary="Демо", suggested_action="Ответить")
     monkeypatch.setattr(escalation, "_handoff", AsyncMock(return_value=card))
@@ -158,6 +163,7 @@ async def test_new_escalation_goes_to_reassigned_recruiter(db, monkeypatch):
             yield s
 
     monkeypatch.setattr(scheduler, "session", session)
+    monkeypatch.setattr(notifications, "session", session)
     monkeypatch.setattr(scheduler, "_job_slots", asyncio.Semaphore(2))
     assert (
         await call(db, "PUT", "/api/employees/1/team", json={"manager_id": 4, "recruiter_id": 3})
@@ -165,5 +171,7 @@ async def test_new_escalation_goes_to_reassigned_recruiter(db, monkeypatch):
     async with db.session() as s:
         await escalation.create_ticket(s, await s.get(Employee, 1), "question", "Демо: где получить пропуск?")
     assert await scheduler.tick() == 1
+    while await notifications.process_one():
+        pass
     targets = [sent.kwargs for sent in client.send.await_args_list]
     assert targets == [{"chat_id": 99}, {"user_id": 8}]  # групповой чат HR и новый рекрутер, старому — ничего

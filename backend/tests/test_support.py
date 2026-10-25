@@ -1,6 +1,7 @@
 """«Кому сегодня нужна поддержка» и подключение руководителя: отбор за сутки и приватность на сервере."""
 
 import os
+from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -13,12 +14,13 @@ from fastapi import FastAPI
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app import channels, main
+from app import main
 from app.analytics import support
 from app.api import admin
 from app.api import support as support_api
+from app.channels import notifications
 from app.db import Base, get_session
-from app.models import Analysis, Employee, Message, Site, Staff, SurveyAnswer, Ticket
+from app.models import Analysis, Employee, MaxNotification, Message, Site, Staff, SurveyAnswer, Ticket
 
 # Свободный ответ новичка и выбранный им вариант: руководитель не должен увидеть ни то, ни другое
 FREE_TEXT = "Руководитель при всех говорит, что у него нет времени на мои вопросы"
@@ -69,6 +71,7 @@ async def db(monkeypatch):
                 lambda conn: Base.metadata.create_all(
                     conn,
                     tables=[
+                        MaxNotification.__table__,
                         Site.__table__,
                         Staff.__table__,
                         Employee.__table__,
@@ -79,8 +82,15 @@ async def db(monkeypatch):
                     ],
                 )
             )
+
+        @asynccontextmanager
+        async def session():
+            async with factory() as s:
+                yield s
+
+        monkeypatch.setattr(notifications, "session", session)
         client = SimpleNamespace(send=AsyncMock(return_value="mid"))
-        monkeypatch.setattr(channels, "max_client", lambda: client)
+        monkeypatch.setattr(notifications, "max_client", lambda: client)
         async with factory() as s:
             s.add(Site(code="GTP", name="Демо", kind="plant"))
             s.add(
@@ -194,7 +204,16 @@ async def test_manager_gets_recommendation_without_newcomer_text(db, mode):
     option = card["options"][0]
 
     r = await db.http.post("/api/employees/1/support/manager", json={"option": option["id"]})
-    assert r.status_code == 200 and r.json()["delivered"] is (mode == "max")
+    assert r.status_code == 200 and r.json()["delivered"] is (False if mode == "panel" else None)
+    if mode != "panel":
+        assert await notifications.process_one()
+        if mode == "max_fails":
+            for _ in range(2):
+                async with db.session() as s:
+                    row = await s.scalar(select(MaxNotification))
+                    row.available_at = func.clock_timestamp()
+                    await s.commit()
+                assert await notifications.process_one()
     if mode == "panel":
         db.client.send.assert_not_awaited()
     else:

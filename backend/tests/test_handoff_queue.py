@@ -16,8 +16,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import channels, scheduler
 from app.bot import escalation
+from app.channels import notifications
 from app.db import Base
-from app.models import Employee, Job, Message, Site, Staff, Ticket, TicketDeadline
+from app.models import Employee, Job, MaxNotification, Message, Site, Staff, Ticket, TicketDeadline
 
 
 @pytest_asyncio.fixture
@@ -37,6 +38,7 @@ async def db(monkeypatch):
                 lambda conn: Base.metadata.create_all(
                     conn,
                     tables=[
+                        MaxNotification.__table__,
                         Site.__table__,
                         Staff.__table__,
                         Employee.__table__,
@@ -54,8 +56,9 @@ async def db(monkeypatch):
                 yield s
 
         monkeypatch.setattr(scheduler, "session", session)
+        monkeypatch.setattr(notifications, "session", session)
         client = SimpleNamespace(send=AsyncMock(return_value="card-mid"))
-        monkeypatch.setattr(channels, "max_client", lambda: client)
+        monkeypatch.setattr(notifications, "max_client", lambda: client)
         monkeypatch.setattr(channels, "settings", lambda: SimpleNamespace(max_hr_chat_id=99))
         handoff = AsyncMock(
             return_value=escalation.Handoff(
@@ -92,6 +95,13 @@ async def create(db):
         return t.id
 
 
+async def tick():
+    count = await scheduler.tick()
+    while await notifications.process_one():
+        pass
+    return count
+
+
 @pytest.mark.asyncio
 async def test_ticket_and_pending_job_survive_session_close(db):
     tid = await create(db)
@@ -101,8 +111,8 @@ async def test_ticket_and_pending_job_survive_session_close(db):
         j = await s.scalar(select(Job).where(Job.kind == "handoff"))
         assert j.kind == "handoff" and j.ref == str(tid) and j.status == "pending"
         assert j.employee_id is None  # подготовка резюме не блокирует диалог сотрудника
-    assert await scheduler.tick() == 1
-    assert await scheduler.tick() == 0
+    assert await tick() == 1
+    assert await tick() == 0
     async with db.session() as s:
         t = await s.get(Ticket, tid)
         assert t.hr_chat_mid == "card-mid" and "Демо-проблема" in t.summary
@@ -128,15 +138,17 @@ async def test_job_insert_failure_rolls_back_ticket(db):
 async def test_transport_failure_retries_card(db):
     tid = await create(db)
     db.client.send.side_effect = RuntimeError("transport failed")
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     async with db.session() as s:
         j = await s.scalar(select(Job).where(Job.kind == "handoff"))
-        assert j.status == "pending" and j.attempts == 1 and j.error
+        assert j.status == "done"
+        notification = await s.scalar(select(MaxNotification).where(MaxNotification.kind == "hr_card"))
+        assert notification.status == "pending" and notification.attempts == 1 and notification.error
         assert (await s.get(Ticket, tid)).hr_chat_mid is None
-        j.run_at = scheduler.utcnow()
+        notification.available_at = func.clock_timestamp()
         await s.commit()
     db.client.send.side_effect = None
-    assert await scheduler.tick() == 1
+    assert await tick() == 0
     async with db.session() as s:
         assert (await s.scalar(select(Job).where(Job.kind == "handoff"))).status == "done"
         assert (await s.get(Ticket, tid)).hr_chat_mid == "card-mid"
@@ -159,14 +171,16 @@ async def test_recruiter_retry_keeps_confirmed_group_card(db):
         return "card-mid"
 
     db.client.send.side_effect = send
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     async with db.session() as s:
         j = await s.scalar(select(Job).where(Job.kind == "handoff"))
-        assert j.status == "pending"
-        j.run_at = scheduler.utcnow()
+        assert j.status == "done"
+        notification = await s.scalar(select(MaxNotification).where(MaxNotification.user_id == 7))
+        assert notification.status == "pending"
+        notification.available_at = func.clock_timestamp()
         await s.commit()
     db.client.send.side_effect = None
-    assert await scheduler.tick() == 1
+    assert await tick() == 0
     targets = [call.kwargs for call in db.client.send.await_args_list]
     assert targets == [{"chat_id": 99}, {"user_id": 7}, {"user_id": 7}]
     db.handoff.assert_awaited_once()
@@ -183,7 +197,7 @@ async def test_closed_or_deleted_ticket_is_not_published(db, remove):
         else:
             t.status = "closed"
         await s.commit()
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     db.client.send.assert_not_awaited()
     db.handoff.assert_not_awaited()
 
@@ -200,19 +214,25 @@ async def test_closure_during_summary_generation_is_respected(db, monkeypatch):
         return escalation.Handoff(summary="Демо", suggested_action="Проверить")
 
     monkeypatch.setattr(escalation, "_handoff", close_while_summarizing)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     db.client.send.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_demo_without_max_keeps_summary_in_panel(db, monkeypatch):
+async def test_missing_token_keeps_summary_and_pending_card(db, monkeypatch):
     tid = await create(db)
-    monkeypatch.setattr(channels, "max_client", lambda: None)
-    assert await scheduler.tick() == 1
+    monkeypatch.setattr(notifications, "max_client", lambda: None)
+    assert await tick() == 1
     async with db.session() as s:
         t = await s.get(Ticket, tid)
         assert "Демо-проблема" in t.summary and t.hr_chat_mid is None
         assert (await s.scalar(select(Job).where(Job.kind == "handoff"))).status == "done"
+        row = await s.scalar(select(MaxNotification))
+        assert row.status == "pending" and row.attempts == 0
+    monkeypatch.setattr(notifications, "max_client", lambda: db.client)
+    assert await notifications.process_one()
+    async with db.session() as s:
+        assert (await s.get(Ticket, tid)).hr_chat_mid == "card-mid"
 
 
 @pytest.mark.asyncio
@@ -226,7 +246,7 @@ async def test_sending_card_does_not_block_reply_message_insert(db):
         return "card-mid"
 
     db.client.send.side_effect = send
-    worker = asyncio.create_task(scheduler.tick())
+    worker = asyncio.create_task(tick())
     try:
         await asyncio.wait_for(started.wait(), timeout=5)
         async with db.session() as s:
@@ -235,3 +255,25 @@ async def test_sending_card_does_not_block_reply_message_insert(db):
     finally:
         release.set()
         await worker
+
+
+@pytest.mark.asyncio
+async def test_urgent_notice_does_not_replace_handoff_summary(db):
+    tid = await create(db)
+    async with db.session() as s:
+        await notifications.enqueue(
+            s,
+            channels.OutMessage(text="Срочное обращение"),
+            user_id=7,
+            ticket_id=tid,
+            kind="handoff",
+            dedup_key=f"urgent:{tid}",
+        )
+        await s.commit()
+        await escalation.finalize(s, tid)
+        await escalation.finalize(s, tid)
+        card = await s.scalar(select(MaxNotification).where(MaxNotification.kind == "hr_card"))
+        assert "Демо-проблема" in card.payload["text"]
+        assert "Демо-проблема" in (await s.get(Ticket, tid)).summary
+        assert await s.scalar(select(func.count()).select_from(MaxNotification)) == 2
+    db.handoff.assert_awaited_once()

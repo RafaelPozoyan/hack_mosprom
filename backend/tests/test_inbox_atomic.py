@@ -26,6 +26,7 @@ from app.models import (
     Employee,
     Job,
     MaxDelivery,
+    MaxNotification,
     MaxUpdate,
     Message,
     Question,
@@ -64,6 +65,7 @@ async def db(monkeypatch):
                             Message,
                             SurveyAnswer,
                             MaxDelivery,
+                            MaxNotification,
                             MaxUpdate,
                             Analysis,
                             AnalysisTask,
@@ -601,3 +603,42 @@ async def test_waiting_hr_releases_connection_for_dialog_owner(db, monkeypatch):
         assert emp.state["survey"]["q"] == 1
         assert emp.state["ticket_id"] == ticket_id
         assert await s.scalar(select(func.count()).select_from(MaxDelivery)) == 1
+
+
+@pytest.mark.asyncio
+async def test_staff_binding_and_service_reply_commit_with_inbox(db, monkeypatch):
+    async with db.session() as s:
+        staff = Staff(name="Демо HR", role="recruiter", invite_code="staff-demo")
+        s.add(staff)
+        await s.commit()
+        staff_id = staff.id
+    event = {
+        "update_type": "bot_started",
+        "user": {"user_id": 42},
+        "timestamp": 1,
+        "chat_id": 42,
+        "payload": "staff_staff-demo",
+    }
+    handle = inbox.process_max_update
+
+    async def fail(*args, **kwargs):
+        await handle(*args, **kwargs)
+        raise RuntimeError("interrupted after staff binding")
+
+    monkeypatch.setattr(inbox, "process_max_update", fail)
+    await inbox.enqueue(event)
+    assert await inbox.process_one()
+    async with db.session() as s:
+        assert (await s.get(Staff, staff_id)).max_user_id is None
+        assert await s.scalar(select(func.count()).select_from(MaxNotification)) == 0
+    db.client.send.assert_not_awaited()
+    monkeypatch.setattr(inbox, "process_max_update", handle)
+    await retry_now(db)
+    assert await inbox.process_one()
+    await inbox.enqueue(event)
+    assert not await inbox.process_one()
+    async with db.session() as s:
+        assert (await s.get(Staff, staff_id)).max_user_id == 42
+        rows = list(await s.scalars(select(MaxNotification)))
+        assert len(rows) == 1 and rows[0].user_id == 42 and rows[0].status == "pending"
+    db.client.send.assert_not_awaited()

@@ -249,7 +249,7 @@ export type AnalysisItem = {
 export type Notification = {
   to?: string
   text: string
-  delivered: boolean
+  delivered: boolean | null
   request?: string | null
   at: string
 }

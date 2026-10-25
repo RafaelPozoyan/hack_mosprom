@@ -20,8 +20,9 @@ from app import channels, scheduler
 from app.api import admin
 from app.bot import escalation, response_time
 from app.bot.scenario import prev_workday, scenario
+from app.channels import notifications
 from app.db import Base, get_session
-from app.models import Employee, Job, Message, Site, Staff, Ticket, TicketDeadline
+from app.models import Employee, Job, MaxNotification, Message, Site, Staff, Ticket, TicketDeadline
 
 MSK, YEKT = ZoneInfo("Europe/Moscow"), ZoneInfo("Asia/Yekaterinburg")
 RULES = {
@@ -108,6 +109,7 @@ async def db(monkeypatch):
                 lambda conn: Base.metadata.create_all(
                     conn,
                     tables=[
+                        MaxNotification.__table__,
                         Site.__table__,
                         Staff.__table__,
                         Employee.__table__,
@@ -125,9 +127,10 @@ async def db(monkeypatch):
                 yield s
 
         monkeypatch.setattr(scheduler, "session", session)
+        monkeypatch.setattr(notifications, "session", session)
         monkeypatch.setattr(scheduler, "_job_slots", asyncio.Semaphore(2))
         client = SimpleNamespace(send=AsyncMock(return_value="mid"))
-        monkeypatch.setattr(channels, "max_client", lambda: client)
+        monkeypatch.setattr(notifications, "max_client", lambda: client)
         monkeypatch.setattr(channels, "settings", lambda: SimpleNamespace(max_hr_chat_id=99))
         handoff = escalation.Handoff(summary="Демо-вопрос о пропуске", suggested_action="Ответить")
         monkeypatch.setattr(escalation, "_handoff", AsyncMock(return_value=handoff))
@@ -202,6 +205,13 @@ async def api(db, method, path):
         return await client.request(method, path)
 
 
+async def tick():
+    count = await scheduler.tick()
+    while await notifications.process_one():
+        pass
+    return count
+
+
 @pytest.mark.asyncio
 async def test_deadline_and_check_are_saved_with_ticket(db):
     before = scheduler.utcnow()
@@ -217,19 +227,19 @@ async def test_deadline_and_check_are_saved_with_ticket(db):
 @pytest.mark.asyncio
 async def test_overdue_reaches_recruiter_and_head_once(db):
     tid = await create(db)
-    assert await scheduler.tick() == 1  # карточка HR; срок ещё не вышел
+    assert await tick() == 1  # карточка HR; срок ещё не вышел
     db.client.send.reset_mock()
     await make_due(db, tid)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     assert len(sent_to(db, 7)) == 1 and "ждёт ответа" in sent_to(db, 7)[0]
     assert len(sent_to(db, 9)) == 1 and f"#{tid}" in sent_to(db, 9)[0]
-    assert await scheduler.tick() == 0
+    assert await tick() == 0
     # Задачу подобрали снова (перезапуск до отметки «выполнено»): отметки срока не дают повторить уведомление.
     async with db.session() as s:
         job = await s.scalar(select(Job).where(Job.kind == response_time.KIND))
         job.status = "running"
         await s.commit()
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     assert db.client.send.await_count == 2
     async with db.session() as s:
         d = await s.get(TicketDeadline, tid)
@@ -239,31 +249,33 @@ async def test_overdue_reaches_recruiter_and_head_once(db):
 @pytest.mark.asyncio
 async def test_urgent_reaches_head_at_once_without_second_recruiter_message(db):
     tid = await create(db, "alert", "high")
-    assert await scheduler.tick() == 2  # карточка HR и срочное уведомление
+    assert await tick() == 2  # карточка HR и срочное уведомление
     assert len(sent_to(db, 7)) == 1  # рекрутеру — только карточка из escalation.finalize
     assert len(sent_to(db, 9)) == 1 and "Срочное" in sent_to(db, 9)[0]
     await make_due(db, tid)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     assert len(sent_to(db, 7)) == 2 and len(sent_to(db, 9)) == 2
 
 
 @pytest.mark.asyncio
-async def test_failure_while_sending_does_not_repeat_notification(db, monkeypatch):
+async def test_enqueue_failure_rolls_back_deadline_and_retries_notifications(db, monkeypatch):
     tid = await create(db)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     await make_due(db, tid)
-    # Сбой посреди отправки: отметки уже сохранены, поэтому повтор задачи уведомление не дублирует.
-    monkeypatch.setattr(channels, "notify_staff", AsyncMock(side_effect=RuntimeError("сбой отправки")))
-    assert await scheduler.tick() == 1
+    # Сбой постановки не должен оставить отметку без сохраняемого уведомления.
+    notify_staff = channels.notify_staff
+    monkeypatch.setattr(channels, "notify_staff", AsyncMock(side_effect=RuntimeError("сбой постановки")))
+    assert await tick() == 1
     async with db.session() as s:
         job = await s.scalar(select(Job).where(Job.kind == response_time.KIND))
         assert job.status == "pending" and job.attempts == 1
         job.run_at = scheduler.utcnow()
         await s.commit()
-    notify = AsyncMock(return_value=True)
-    monkeypatch.setattr(channels, "notify_staff", notify)
-    assert await scheduler.tick() == 1
-    notify.assert_not_awaited()
+        assert (await s.get(TicketDeadline, tid)).overdue_at is None
+    monkeypatch.setattr(channels, "notify_staff", notify_staff)
+    assert await tick() == 1
+    assert len(sent_to(db, 7)) == 2  # карточка и одно напоминание
+    assert len(sent_to(db, 9)) == 1
 
 
 @pytest.mark.asyncio
@@ -272,9 +284,9 @@ async def test_without_recruiter_head_is_told_and_no_reminder_is_shown(db):
         (await s.get(Employee, 1)).recruiter_id = None
         await s.commit()
     tid = await create(db)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     await make_due(db, tid)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     assert len(sent_to(db, 9)) == 1 and "не назначен" in sent_to(db, 9)[0]
     async with db.session() as s:
         d = await s.get(TicketDeadline, tid)
@@ -289,22 +301,22 @@ async def test_head_who_leads_newcomer_gets_no_duplicates(db):
         (await s.get(Employee, 1)).recruiter_id = 2  # HR-руководитель сам ведёт новичка
         await s.commit()
     tid = await create(db, "alert", "high")
-    assert await scheduler.tick() == 2
+    assert await tick() == 2
     assert len(sent_to(db, 9)) == 1  # карточка рекрутеру, без второго «срочного»
     await make_due(db, tid)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     assert len(sent_to(db, 9)) == 2  # и одно напоминание после срока
 
 
 @pytest.mark.asyncio
 async def test_hr_reply_clears_overdue(db):
     tid = await create(db)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     db.client.send.reset_mock()
     async with db.session() as s:
         await escalation.hr_reply(s, await s.get(Ticket, tid), "Пропуск выдадут на проходной", "Мария")
     await make_due(db, tid)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     db.client.send.assert_not_awaited()  # сотрудник в демо-канале, уведомлений HR нет
     async with db.session() as s:
         view = (await response_time.views(s, [await s.get(Ticket, tid)]))[tid]
@@ -315,12 +327,12 @@ async def test_hr_reply_clears_overdue(db):
 @pytest.mark.asyncio
 async def test_closed_ticket_does_not_remind(db):
     tid = await create(db)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     async with db.session() as s:
         await escalation.close(s, await s.get(Ticket, tid), notify=False)
     db.client.send.reset_mock()
     await make_due(db, tid)
-    assert await scheduler.tick() == 1
+    assert await tick() == 1
     db.client.send.assert_not_awaited()
     assert (await api(db, "POST", f"/api/tickets/{tid}/remind")).status_code == 409
 
@@ -329,7 +341,9 @@ async def test_closed_ticket_does_not_remind(db):
 async def test_remind_button_reports_delivery(db):
     tid = await create(db)
     response = await api(db, "POST", f"/api/tickets/{tid}/remind")
-    assert response.status_code == 200 and response.json() == {"delivered": True}
+    assert response.status_code == 200 and response.json() == {"delivered": None}
+    db.client.send.assert_not_awaited()
+    assert await notifications.process_one()
     assert len(sent_to(db, 7)) == 1
     async with db.session() as s:
         (await s.get(Staff, 1)).max_user_id = None
@@ -390,3 +404,16 @@ async def test_today_shows_overdue_and_first_reply_median(db):
     assert today["overdue"][0]["response"]["recruiter"] == "Демо рекрутер"
     assert today["first_reply"] == {"median_min": 60, "tickets": 2, "days": 30}
     assert today["rules"] == {"hours": 4, "urgent_hours": 1}
+
+
+@pytest.mark.asyncio
+async def test_old_confirmation_cannot_replace_new_failed_reminder(db):
+    tid = await create(db)
+    assert (await api(db, "POST", f"/api/tickets/{tid}/remind")).json() == {"delivered": None}
+    async with db.session() as s:
+        (await s.get(Staff, 1)).max_user_id = None
+        await s.commit()
+    assert (await api(db, "POST", f"/api/tickets/{tid}/remind")).json() == {"delivered": False}
+    assert await notifications.process_one()
+    async with db.session() as s:
+        assert (await s.get(TicketDeadline, tid)).reminder_delivered is False

@@ -8,7 +8,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.channels.base import Button, InEvent, OutMessage
-from app.channels.max import max_client
 from app.config import settings
 from app.db import after_commit
 from app.models import Employee, MaxDelivery, Message, Staff
@@ -112,34 +111,23 @@ async def edit(s: AsyncSession, emp: Employee, m: Message, msg: OutMessage) -> N
     after_commit(s, hub.publish, emp.id, {"type": "edit", "message": message_view(m)})
 
 
-async def notify_staff(staff: Staff | None, msg: OutMessage, *, raise_errors: bool = False) -> bool:
-    """Личное сообщение руководителю/HR в MAX. Без MAX-аккаунта уведомление видно только в админке."""
-    client = max_client()
-    if not (staff and staff.max_user_id and client):
-        return False
-    try:
-        await client.send(msg, user_id=staff.max_user_id)
-        return True
-    except Exception:
-        log.exception("notify_staff failed")
-        if raise_errors:
-            raise
-        return False
+async def notify_staff(s: AsyncSession, staff: Staff | None, msg: OutMessage, **kwargs) -> int | None:
+    """Поставить личное уведомление в очередь; ID подтверждает постановку, а не доставку."""
+    from app.channels.notifications import enqueue
+
+    if not (staff and staff.max_user_id):
+        return None
+    return await enqueue(s, msg, user_id=staff.max_user_id, **kwargs)
 
 
-async def post_hr_chat(msg: OutMessage, *, raise_errors: bool = False) -> str | None:
-    """Публикует карточку в групповой чат HR. Ответ HR реплаем на неё уходит сотруднику (см. bot/escalation)."""
-    client = max_client()
+async def post_hr_chat(s: AsyncSession, msg: OutMessage, **kwargs) -> int | None:
+    """Поставить сообщение HR-группе; реальный mid карточки сохраняет доставщик."""
+    from app.channels.notifications import enqueue
+
     chat_id = settings().max_hr_chat_id
-    if not (client and chat_id):
+    if not chat_id:
         return None
-    try:
-        return await client.send(msg, chat_id=chat_id)
-    except Exception:
-        log.exception("post_hr_chat failed")
-        if raise_errors:
-            raise
-        return None
+    return await enqueue(s, msg, chat_id=chat_id, **kwargs)
 
 
 __all__ = [

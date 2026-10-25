@@ -18,7 +18,7 @@ from app.bot import response_time
 from app.bot.scenario import render
 from app.channels import ADMIN_FEED, Button, OutMessage, hub
 from app.db import after_commit
-from app.models import Employee, Job, Message, Ticket
+from app.models import Employee, Job, MaxNotification, Message, Ticket
 
 log = logging.getLogger(__name__)
 
@@ -104,8 +104,16 @@ async def finalize(s: AsyncSession, ticket_id: int) -> None:
     t = await s.get(Ticket, ticket_id)
     if t is None or t.status != "open":
         return
-    card = await _handoff(s, t.employee, t.subject) if not t.hr_chat_mid else None
-    # За время работы LLM обращение могли закрыть. Закрытие и публикация сериализованы по Ticket.
+    prepared = t.hr_chat_mid or await s.scalar(
+        select(MaxNotification.id)
+        .where(
+            MaxNotification.ticket_id == t.id,
+            MaxNotification.dedup_key.endswith(f":handoff:{t.id}"),
+        )
+        .limit(1)
+    )
+    card = await _handoff(s, t.employee, t.subject) if not prepared else None
+    # За время работы LLM обращение могли закрыть. Проверка и постановка сериализованы по Ticket.
     stmt = (
         select(Ticket)
         .where(Ticket.id == ticket_id)
@@ -125,13 +133,19 @@ async def finalize(s: AsyncSession, ticket_id: int) -> None:
         "Ответьте реплаем на это сообщение — ответ уйдёт сотруднику в чат с Корсиком."
     )
     if not t.hr_chat_mid:
-        t.hr_chat_mid = await channels.post_hr_chat(OutMessage(text=text), raise_errors=True)
-    await s.commit()  # сохранённый mid позволяет повторить только уведомление рекрутеру
+        await channels.post_hr_chat(
+            s, OutMessage(text=text), ticket_id=t.id, kind="hr_card", dedup_key=f"handoff:{t.id}"
+        )
     if emp.recruiter:
-        t = await s.scalar(stmt)
-        if t is not None and t.status == "open":
-            await channels.notify_staff(emp.recruiter, OutMessage(text=text), raise_errors=True)
-        await s.commit()
+        await channels.notify_staff(
+            s,
+            emp.recruiter,
+            OutMessage(text=text),
+            ticket_id=t.id,
+            kind="handoff",
+            dedup_key=f"handoff:{t.id}",
+        )
+    await s.commit()
     after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_updated", "id": ticket_id})
 
 
@@ -202,7 +216,8 @@ async def forward_from_employee(s: AsyncSession, emp: Employee, text: str, confi
         emp.state = {k: v for k, v in emp.state.items() if k != "ticket_id"}
         await s.commit()
         return
-    await channels.post_hr_chat(OutMessage(text=f"✉️ #{t.id} · {emp.full_name}:\n{text}"))
+    await channels.post_hr_chat(s, OutMessage(text=f"✉️ #{t.id} · {emp.full_name}:\n{text}"), ticket_id=t.id)
+    await s.commit()
     after_commit(s, hub.publish, ADMIN_FEED, {"type": "ticket_message", "id": t.id})
     if confirm:
         # Пока диалог открыт, вопросы идут HR, а не Корсику: без ответа новичок решит, что бот завис

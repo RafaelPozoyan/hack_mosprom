@@ -166,8 +166,8 @@ def test_max_reply_respects_ticket_status(case, monkeypatch, closed):
         case.send.assert_not_awaited()
         assert "ticket_id" not in case.emp.state
         case.post.assert_awaited_once()
-        assert "#7" in case.post.await_args.args[0].text
-        assert "закрыто" in case.post.await_args.args[0].text
+        assert "#7" in case.post.await_args.args[1].text
+        assert "закрыто" in case.post.await_args.args[1].text
     else:
         case.send.assert_awaited_once()
         assert case.send.await_args.args[2].text == "💬 Мария:\nПоможем с доступами"

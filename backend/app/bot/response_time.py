@@ -96,19 +96,18 @@ def _reminder(t: Ticket) -> OutMessage:
     return _card(t, f"⏰ Новичок ждёт ответа HR: обращение #{t.id}")
 
 
-async def _notify_heads(s: AsyncSession, t: Ticket, msg: OutMessage) -> None:
+async def _notify_heads(s: AsyncSession, t: Ticket, msg: OutMessage, event: str) -> None:
     # HR-руководитель, который сам ведёт новичка, уже получил карточку или напоминание как рекрутер.
     heads = select(Staff).where(Staff.role == "head", Staff.id != t.employee.recruiter_id)
     for head in (await s.scalars(heads)).all():
-        await channels.notify_staff(head, msg)
+        await channels.notify_staff(s, head, msg, ticket_id=t.id, kind="handoff", dedup_key=f"{event}:{t.id}")
 
 
 async def check(s: AsyncSession, ticket_id: int) -> None:
     """Задача очереди: срочное — HR-руководителю сразу, после срока — напоминание рекрутеру и HR-руководителю.
 
-    Отметка сохраняется до отправки: повтор задачи, следующий проход планировщика и перезапуск не дублируют
-    уведомление, а при сбое в момент отправки оно теряется. Просроченное обращение в любом случае видно
-    в панели, там же — дошло ли напоминание рекрутеру."""
+    Отметки и намерения доставки фиксируются одной транзакцией. Доставщик отдельно подтверждает
+    напоминание рекрутеру; до подтверждения панель показывает ожидание."""
     d = await s.scalar(select(TicketDeadline).where(TicketDeadline.ticket_id == ticket_id).with_for_update())
     t = await s.get(Ticket, ticket_id)
     if d is None or t is None or t.status != "open" or await _replied(s, ticket_id):
@@ -124,30 +123,54 @@ async def check(s: AsyncSession, ticket_id: int) -> None:
         d.overdue_at = now
     if remind:
         d.reminded_at = now
-    await s.commit()
     if urgent:
-        await _notify_heads(s, t, _card(t, f"🚨 Срочное обращение #{t.id} — красный флаг"))
+        await _notify_heads(s, t, _card(t, f"🚨 Срочное обращение #{t.id} — красный флаг"), "urgent")
     if remind:
-        d.reminder_delivered = await channels.notify_staff(t.employee.recruiter, _reminder(t))
-        await s.commit()
+        queued = await channels.notify_staff(
+            s,
+            t.employee.recruiter,
+            _reminder(t),
+            ticket_id=t.id,
+            kind="reminder",
+            dedup_key=f"reminder:{t.id}:{d.reminded_at.isoformat()}",
+        )
+        d.reminder_delivered = None if queued is not None else False
     if overdue:
-        delivered = "доставлено в MAX" if d.reminder_delivered else "в MAX не дошло — свяжитесь лично"
+        delivered = (
+            "ожидает доставки в MAX"
+            if d.reminder_delivered is None
+            else "доставлено в MAX"
+            if d.reminder_delivered
+            else "в MAX не дошло — свяжитесь лично"
+        )
         note = f" (напоминание {delivered})" if t.employee.recruiter else ""
-        await _notify_heads(s, t, _card(t, f"⏰ Обращение #{t.id} ждёт ответа HR дольше срока", note))
+        await _notify_heads(
+            s, t, _card(t, f"⏰ Обращение #{t.id} ждёт ответа HR дольше срока", note), "overdue"
+        )
+    await s.commit()
 
 
-async def remind(s: AsyncSession, t: Ticket) -> bool:
-    """Кнопка «Напомнить рекрутеру»: напоминание уходит сразу, дошло ли оно в MAX — видно в панели."""
+async def remind(s: AsyncSession, t: Ticket) -> bool | None:
+    """Кнопка «Напомнить рекрутеру»: напоминание ставится в очередь; до подтверждения возвращается None."""
     if t.status != "open" or await _replied(s, t.id):
         raise ReminderError("HR уже ответил или обращение закрыто — напоминать не нужно.")
     if t.employee.recruiter is None:
         raise ReminderError("У новичка не назначен рекрутер — напомнить некому.")
-    d = await s.get(TicketDeadline, t.id)
+    d = await s.get(TicketDeadline, t.id, with_for_update=True)
     if d is None:  # обращение создано до появления сроков
         d = TicketDeadline(ticket_id=t.id, due_at=deadline(t.created_at, t.severity, _tz(t)))
         s.add(d)
-    d.reminder_delivered = await channels.notify_staff(t.employee.recruiter, _reminder(t))
     d.reminded_at = datetime.now(UTC)
+    await s.flush()
+    queued = await channels.notify_staff(
+        s,
+        t.employee.recruiter,
+        _reminder(t),
+        ticket_id=t.id,
+        kind="reminder",
+        dedup_key=f"reminder:{t.id}:{d.reminded_at.isoformat()}",
+    )
+    d.reminder_delivered = None if queued is not None else False
     await s.commit()
     return d.reminder_delivered
 

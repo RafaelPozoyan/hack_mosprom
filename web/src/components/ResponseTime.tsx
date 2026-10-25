@@ -178,7 +178,7 @@ function PersonRow({ p, head }: { p: Person; head: boolean }) {
   const t = p.main
   const late = p.overdue ? t.response : undefined
   const remind = useMutation({
-    mutationFn: (id: number) => api.post<{ delivered: boolean }>(`/api/tickets/${id}/remind`),
+    mutationFn: (id: number) => api.post<{ delivered: boolean | null }>(`/api/tickets/${id}/remind`),
     onSettled: () => qc.invalidateQueries({ queryKey: ['tickets'] }),
   })
   const count = p.tickets.length
@@ -199,11 +199,14 @@ function PersonRow({ p, head }: { p: Person; head: boolean }) {
       </div>
     )
   } else if (late?.reminded_at) {
-    note = late.reminder_delivered ? (
-      <div className="text-emerald-700">Напомнили {fmtDateTime(late.reminded_at)}</div>
-    ) : (
-      <div className="text-amber-800">Напоминание не дошло в MAX — свяжитесь с рекрутером лично</div>
-    )
+    note =
+      late.reminder_delivered === null ? (
+        <div className="text-ink/60">Напоминание ожидает доставки в MAX</div>
+      ) : late.reminder_delivered ? (
+        <div className="text-emerald-700">Напомнили {fmtDateTime(late.reminded_at)}</div>
+      ) : (
+        <div className="text-amber-800">Напоминание не дошло в MAX — свяжитесь с рекрутером лично</div>
+      )
   }
   return (
     <div className="flex items-center gap-4 py-2">

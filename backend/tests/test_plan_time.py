@@ -26,6 +26,7 @@ from app.models import (
     Employee,
     Job,
     MaxDelivery,
+    MaxNotification,
     Message,
     Site,
     Staff,
@@ -295,6 +296,7 @@ async def db(monkeypatch):
                 lambda conn: Base.metadata.create_all(
                     conn,
                     tables=[
+                        MaxNotification.__table__,
                         Site.__table__,
                         Staff.__table__,
                         Employee.__table__,

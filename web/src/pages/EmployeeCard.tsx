@@ -824,10 +824,9 @@ function Signals({ data, items, calm }: { data: EmployeeCardData; items: Concern
 const unique = (list: Notification[]) =>
   list.filter((n, i) => list.findIndex((m) => m.to === n.to && m.text === n.text) === i)
 
-/** Почему уведомление не дошло в MAX. Сервер помнит только «дошло или нет» (channels.notify_staff): не дойти
- *  могло, если Корсик не подключён к MAX, адресат не назначен или не подключил MAX, либо MAX не принял сообщение.
- *  Причину видно по нынешнему состоянию команды; если сейчас всё подключено — причину не называем. */
+/** None — сохранённая отправка ждёт подтверждения; причину отказа уточняем по состоянию команды. */
 function delivery(n: Notification, e: Employee, meta: Meta | undefined) {
+  if (n.delivered === null) return 'ожидает доставки в MAX'
   if (n.delivered) return 'доставлено в MAX'
   const who = n.to === 'manager' ? 'руководитель' : 'рекрутер'
   const id = n.to === 'manager' ? e.manager_id : e.recruiter_id

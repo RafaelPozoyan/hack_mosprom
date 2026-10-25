@@ -15,6 +15,7 @@ from app import channels
 from app.bot import demo_try, dialog, escalation
 from app.channels import InEvent, OutMessage
 from app.channels.max import max_client
+from app.channels.notifications import enqueue
 from app.config import settings
 from app.db import after_commit, session
 from app.models import Employee, Staff, Ticket
@@ -155,11 +156,20 @@ async def process_max_update(
                 )
                 _after_event(context, demo_try.schedule_after_event, emp_id)
             elif user_id:
-                await client.send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
+                await _service_reply(user_id, UNKNOWN_USER, context=context)
     except Exception:
         log.exception("MAX update failed: type=%s", kind)
         if raise_errors:
             raise
+
+
+async def _service_reply(
+    user_id: int, text: str, *, context: EventContext | None = None, s: AsyncSession | None = None
+) -> None:
+    work = s or (context.session if context else None)
+    async with nullcontext(work) if work is not None else session() as pending:
+        await enqueue(pending, OutMessage(text=text), user_id=user_id)
+        await pending.commit()
 
 
 async def _employee_by_user(user_id: int | None, *, context: EventContext | None = None) -> int | None:
@@ -176,7 +186,7 @@ async def _on_started(
     if demo_try.is_try(payload):
         emp_id = await demo_try.enroll(user)
         if emp_id is None:
-            await max_client().send(OutMessage(text=demo_try.FULL), user_id=user_id)
+            await _service_reply(user_id, demo_try.FULL, context=context)
             return
         await handle_employee_event(
             emp_id, InEvent("start", payload=payload), raise_errors=raise_errors, context=context
@@ -188,16 +198,14 @@ async def _on_started(
             staff = await s.scalar(select(Staff).where(Staff.invite_code == payload[6:]))
             if staff and staff.max_user_id not in (None, user_id):
                 # иначе по чужой ссылке staff_<код> можно подписаться на дайджесты и эскалации другого сотрудника HR
-                await max_client().send(OutMessage(text=CODE_TAKEN), user_id=user_id)
+                await _service_reply(user_id, CODE_TAKEN, s=s)
                 return
             if staff:
                 staff.max_user_id = user_id
-                await s.commit()
-                await max_client().send(
-                    OutMessage(
-                        text=f"Готово, {staff.name}! Сюда будут приходить уведомления Корсика об адаптации ваших сотрудников 🐾"
-                    ),
-                    user_id=user_id,
+                await _service_reply(
+                    user_id,
+                    f"Готово, {staff.name}! Сюда будут приходить уведомления Корсика об адаптации ваших сотрудников 🐾",
+                    s=s,
                 )
                 return
         emp = await s.scalar(select(Employee).where(Employee.invite_code == payload)) if payload else None
@@ -210,7 +218,7 @@ async def _on_started(
             select(Employee.id).where(Employee.max_user_id == user_id, Employee.id != emp.id)
         )
         if emp and (emp.max_user_id not in (None, user_id) or other):
-            await max_client().send(OutMessage(text=CODE_TAKEN), user_id=user_id)
+            await _service_reply(user_id, CODE_TAKEN, s=s)
             return
         if emp:
             emp.channel, emp.max_user_id = "max", user_id
@@ -223,7 +231,7 @@ async def _on_started(
             emp_id, InEvent("start", payload=payload), raise_errors=raise_errors, context=context
         )
     else:
-        await max_client().send(OutMessage(text=UNKNOWN_USER), user_id=user_id)
+        await _service_reply(user_id, UNKNOWN_USER, context=context)
 
 
 async def _on_hr_chat(msg: dict, text: str, *, context: EventContext | None = None) -> None:
@@ -240,10 +248,12 @@ async def _on_hr_chat(msg: dict, text: str, *, context: EventContext | None = No
         if not t:
             if from_bot:
                 await channels.post_hr_chat(
+                    s,
                     OutMessage(
                         text="Не нашёл обращение для этого ответа. Ответьте, пожалуйста, реплаем на карточку обращения."
-                    )
+                    ),
                 )
+                await s.commit()
             return
         async with ticket_dialog(s, t, context=context):
             author = (
@@ -255,7 +265,8 @@ async def _on_hr_chat(msg: dict, text: str, *, context: EventContext | None = No
                 try:
                     await escalation.hr_reply(s, t, text, author)
                 except escalation.TicketClosedError as e:
-                    await channels.post_hr_chat(OutMessage(text=f"Обращение #{t.id}: {e}"))
+                    await channels.post_hr_chat(s, OutMessage(text=f"Обращение #{t.id}: {e}"))
+                    await s.commit()
 
 
 def _marker_file() -> Path:

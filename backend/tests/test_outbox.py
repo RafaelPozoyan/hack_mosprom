@@ -56,7 +56,6 @@ async def db(monkeypatch):
         monkeypatch.setattr(outbox, "session", session)
         client = SimpleNamespace(send=AsyncMock(return_value="mid-1"), edit=AsyncMock())
         monkeypatch.setattr(outbox, "max_client", lambda: client)
-        monkeypatch.setattr(channels, "max_client", lambda: client)
         async with factory() as s:
             s.add(Site(code="GTP", name="Демо", kind="plant"))
             await s.flush()

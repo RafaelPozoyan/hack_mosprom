@@ -25,6 +25,7 @@ from app.models import (
     AnalysisTask,
     Employee,
     Job,
+    MaxNotification,
     Message,
     Site,
     Staff,
@@ -52,6 +53,7 @@ async def db(monkeypatch):
                 lambda conn: Base.metadata.create_all(
                     conn,
                     tables=[
+                        MaxNotification.__table__,
                         Site.__table__,
                         Staff.__table__,
                         Employee.__table__,
@@ -74,7 +76,6 @@ async def db(monkeypatch):
 
         monkeypatch.setattr(scheduler, "session", session)
         monkeypatch.setattr(scheduler, "_job_slots", asyncio.Semaphore(2))
-        monkeypatch.setattr(channels, "max_client", lambda: None)
         monkeypatch.setattr(sentiment, "react", AsyncMock())
         monkeypatch.setattr(surveys, "react", AsyncMock())
         async with factory() as s:
@@ -540,7 +541,7 @@ async def test_recruiter_receives_signal_without_manager_notification(db, monkey
     )
     assert await scheduler.run_job(job_id)
     notify.assert_awaited_once()
-    assert notify.await_args.args[0].role == "recruiter"
+    assert notify.await_args.args[1].role == "recruiter"
 
 
 @pytest.mark.asyncio

@@ -23,13 +23,16 @@ export const useSupport = (empId: number) =>
 export default function SupportNote({ empId, name, onSent, quiet }: Props) {
   const { data } = useSupport(empId)
   const [open, setOpen] = useState(false)
-  const [delivered, setDelivered] = useState<boolean | null>(null)
+  const [delivered, setDelivered] = useState<boolean | null | undefined>(undefined)
   if (!data?.reasons.length) return null
-  const sent = delivered
-    ? 'Отправлено в MAX'
-    : data.manager_in_max
-      ? 'В MAX не доставлено — рекомендация на экране «Мои новички»'
-      : 'Отправлено на экран «Мои новички»'
+  const sent =
+    delivered === null
+      ? 'Рекомендация сохранена и ожидает доставки в MAX'
+      : delivered
+        ? 'Отправлено в MAX'
+        : data.manager_in_max
+          ? 'В MAX не доставлено — рекомендация на экране «Мои новички»'
+          : 'Отправлено на экран «Мои новички»'
   return (
     <div
       className={clsx(
@@ -56,7 +59,7 @@ export default function SupportNote({ empId, name, onSent, quiet }: Props) {
           <UserRoundPlus size={16} /> Подключить руководителя
         </Btn>
         {data.refusal && <span className="max-w-64 text-right text-xs text-ink/50">{data.refusal}</span>}
-        {delivered !== null && (
+        {delivered !== undefined && (
           <span role="status" className="flex max-w-64 gap-1 text-right text-xs text-emerald-700">
             <CheckCircle2 size={14} className="mt-px shrink-0" /> {sent}
           </span>
@@ -91,12 +94,12 @@ function SendModal({
   empId: number
   name: string
   onClose: () => void
-  onDone: (delivered: boolean) => void
+  onDone: (delivered: boolean | null) => void
 }) {
   const [choice, setChoice] = useState(data.options[0]?.id)
   const send = useMutation({
     mutationFn: () =>
-      api.post<{ delivered: boolean }>(`/api/employees/${empId}/support/manager`, { option: choice }),
+      api.post<{ delivered: boolean | null }>(`/api/employees/${empId}/support/manager`, { option: choice }),
     onSuccess: (r) => onDone(r.delivered),
   })
   return (

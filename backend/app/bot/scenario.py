@@ -325,15 +325,24 @@ async def notify_audience(
     """Push руководителю/рекрутеру: в MAX, если он подключён, и всегда — в журнал карточки сотрудника.
     extra — пометки в журнале (например, какую рекомендацию выбрал HR)."""
     staff = emp.manager if audience == "manager" else emp.recruiter
-    delivered = await channels.notify_staff(staff, OutMessage(text=f"🐾 Корсик · {emp.full_name}\n\n{text}"))
     m = Message(
         employee_id=emp.id,
         direction="out",
         author=f"to_{audience}",
         text=text,
         step_id=step_id,
-        payload={"delivered": delivered, "staff": staff.name if staff else None, **extra},
+        payload={"delivered": None, "staff": staff.name if staff else None, **extra},
     )
     s.add(m)
+    await s.flush()
+    queued = await channels.notify_staff(
+        s,
+        staff,
+        OutMessage(text=f"🐾 Корсик · {emp.full_name}\n\n{text}"),
+        message_id=m.id,
+        dedup_key=f"notice:{m.id}",
+    )
+    if queued is None:
+        m.payload = {**m.payload, "delivered": False}
     await s.commit()
     return m

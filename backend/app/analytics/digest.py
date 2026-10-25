@@ -125,7 +125,8 @@ async def run(s: AsyncSession, end: date | None = None) -> Digest:
         text += "\n\n🧠 " + story.strip()
     d = Digest(period_start=start, period_end=end, stats=st, text=text)
     s.add(d)
-    await s.commit()
+    await s.flush()
     for head in (await s.scalars(select(Staff).where(Staff.role == "head"))).all():
-        await channels.notify_staff(head, OutMessage(text=text))
+        await channels.notify_staff(s, head, OutMessage(text=text), dedup_key=f"digest:{d.id}")
+    await s.commit()
     return d
