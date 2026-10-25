@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     demo_try_payload: str = ""
     demo_try_site: str = "GTP"  # завод — та же площадка, что в демо-сценарии README
     demo_try_limit: int = 200  # запас на жюри и зрителей защиты; дальше QR вежливо отказывает
+    demo_try_note: str = ""  # пояснение к демо-доступу, например что бот временно живёт на чужом аккаунте MAX
 
     # LLM — любой OpenAI-совместимый endpoint: llama.cpp/vLLM (GigaChat 3.1 Lightning), Yandex AI Studio, GigaChat
     llm_base_url: str = "http://localhost:8081/v1"
