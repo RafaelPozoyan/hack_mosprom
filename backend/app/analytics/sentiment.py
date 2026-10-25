@@ -164,7 +164,10 @@ def analyze_later(
         from app.models import Question
 
         async with session() as s:
-            context = await last_bot_text(s, await s.get(Employee, emp_id))
+            emp = await s.get(Employee, emp_id)
+            if emp is None:  # новичка удалили, пока ответ ждал разбора
+                return
+            context = await last_bot_text(s, emp)
         try:
             res = await analyze_text(text, context=context)
         except Exception:
@@ -172,6 +175,8 @@ def analyze_later(
             res = None
         async with _locks[emp_id], session() as s:
             emp = await s.get(Employee, emp_id)
+            if emp is None:  # удалили за время разбора
+                return
             a = await save_and_react(s, emp, res, text, source, extra_flags)
             if a and question_id:
                 q = await s.get(Question, question_id)
