@@ -459,10 +459,19 @@ async def manager_card(code: str, emp_id: int, s: AsyncSession = Depends(get_ses
         [[a.value.get("flag")] for a in flagged] + [a.risk_flags or [] for a in analyses],
         scenario()["analytics"],
     )
+    # шаг, отправленный досрочно (перемотка, «отправить сейчас»), уже не «дальше», хотя его дата впереди
+    sent = set(
+        await s.scalars(
+            select(Message.step_id).where(Message.employee_id == emp_id, Message.step_id.is_not(None))
+        )
+    )
     upcoming = [
         {"title": st.get("title", st["id"]), "run_at": run_at.isoformat()}
         for st, run_at in timeline(e)
-        if run_at and st.get("audience", "employee") == "employee" and run_at > datetime.now(UTC)
+        if run_at
+        and st.get("audience", "employee") == "employee"
+        and run_at > datetime.now(UTC)
+        and st["id"] not in sent
     ][:4]
     notes = (
         await s.scalars(
