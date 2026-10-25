@@ -425,17 +425,30 @@ def test_answer_cache_reuses_same_question_until_knowledge_changes(monkeypatch):
     assert inner.await_count == 3  # база знаний изменилась — считаем заново
 
 
-def test_answer_cache_skips_service_errors(monkeypatch):
+@pytest.mark.parametrize(
+    ("reason", "calls"),
+    [
+        ("llm_error", 2),
+        ("search_error", 2),
+        ("not_in_context", 2),
+        ("bad_citation", 2),
+        ("unsupported_number", 2),
+        ("low_score", 1),
+        ("no_hits", 1),
+    ],
+)
+def test_answer_cache_keeps_only_stable_refusals(monkeypatch, reason, calls):
     from unittest.mock import AsyncMock
 
     from app.rag import answer as rag
 
     rag.forget_answers()
-    inner = AsyncMock(return_value=rag.Result(False, "", "llm_error", None))
+    inner = AsyncMock(return_value=rag.Result(False, "", reason, None))
     monkeypatch.setattr(rag, "_answer", inner)
     asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
     asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
-    assert inner.await_count == 2  # сбой сервиса не запоминаем: следующий раз — новая попытка
+    # отказ поиска при той же базе повторится; сбой сервиса и отказ проверки ответа — следующая попытка может пройти
+    assert inner.await_count == calls
 
 
 def test_analysis_skips_deleted_employee(monkeypatch):
