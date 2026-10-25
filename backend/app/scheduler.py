@@ -64,13 +64,15 @@ async def run_job(job_id: int) -> bool:
                 )
                 if job is None or job.status not in ("pending", "running"):
                     return False
-                if job.status == "pending" and job.run_at > utcnow():
+                # run_at создаётся по часам приложения; SQL должен использовать тот же срез времени.
+                now = utcnow()
+                if job.status == "pending" and job.run_at > now:
                     return False
                 if job.employee_id and await s.scalar(
                     select(Job.id)
                     .where(
                         Job.employee_id == job.employee_id,
-                        or_((Job.status == "pending") & (Job.run_at <= func.now()), Job.status == "running"),
+                        or_((Job.status == "pending") & (Job.run_at <= now), Job.status == "running"),
                         or_(Job.run_at < job.run_at, (Job.run_at == job.run_at) & (Job.id < job.id)),
                     )
                     .limit(1)
@@ -147,13 +149,14 @@ async def _execute(s, job: Job) -> None:
 
 async def tick() -> int:
     async with session() as s:
+        now = utcnow()
         # Выбираем кандидатов, не захватываем пачку: авария не оставит остальные задачи running.
         ids = list(
             await s.scalars(
                 select(Job.id)
                 .where(
                     or_(
-                        (Job.status == "pending") & (Job.run_at <= func.now()),
+                        (Job.status == "pending") & (Job.run_at <= now),
                         Job.status == "running",
                     )
                 )

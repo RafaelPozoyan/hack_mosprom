@@ -12,7 +12,7 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import main, scheduler
@@ -306,6 +306,38 @@ async def test_later_employee_job_cannot_overtake_earlier_due_job(db, monkeypatc
     assert not await scheduler.run_job(later)
     assert await scheduler.run_job(earlier)
     assert await scheduler.run_job(later)
+
+
+@pytest.mark.asyncio
+async def test_later_job_cannot_overtake_when_database_clock_is_behind(db, monkeypatch):
+    async with db.session() as s:
+        now = await s.scalar(select(func.now())) + timedelta(hours=1)
+    monkeypatch.setattr(scheduler, "utcnow", lambda: now)
+    earlier = await job(db, run_at=now - timedelta(minutes=2))
+    later = await job(db, run_at=now - timedelta(minutes=1))
+    handler = AsyncMock()
+    monkeypatch.setattr(scenario, "run_step", handler)
+
+    assert not await scheduler.run_job(later)
+    handler.assert_not_awaited()
+    assert await scheduler.run_job(earlier)
+    assert await scheduler.run_job(later)
+    assert handler.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clock_offset", [-1, 1])
+async def test_tick_uses_application_clock_for_due_candidates(db, monkeypatch, clock_offset):
+    async with db.session() as s:
+        now = await s.scalar(select(func.now())) + timedelta(hours=clock_offset)
+    monkeypatch.setattr(scheduler, "utcnow", lambda: now)
+    due = await job(db, run_at=now - timedelta(minutes=1))
+    await job(db, run_at=now + timedelta(minutes=1))
+    run = AsyncMock(return_value=True)
+    monkeypatch.setattr(scheduler, "run_job", run)
+
+    assert await scheduler.tick() == 1
+    run.assert_awaited_once_with(due)
 
 
 @pytest.mark.asyncio
