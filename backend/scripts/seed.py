@@ -203,6 +203,21 @@ async def event(emp_id: int, ev: InEvent) -> None:
         await dialog.handle(s, emp, ev)
 
 
+async def close_step_jobs(s, emp_id: int, step_id: str, status: str) -> None:
+    """Шаг сида выполнен или пропущен напрямую — его задача в очереди не должна запустить шаг ещё раз (#68)."""
+    await s.execute(
+        update(Job)
+        .where(
+            Job.employee_id == emp_id,
+            Job.kind == "step",
+            Job.ref == step_id,
+            Job.status.in_(["pending", "blocked"]),
+        )
+        .values(status=status, done_at=func.now())
+    )
+    await s.commit()
+
+
 async def free_text(emp_id: int, text: str) -> None:
     """Свободный ответ в опросе, как у сотрудника: сообщение и подтверждение «Да, это ответ»."""
     await event(emp_id, InEvent("text", text=text))
@@ -310,11 +325,12 @@ async def main(dirs: list[Path]) -> None:
 
                     try:
                         await run_step(s, emp, kind)
-                    except (
-                        StepSkipped
-                    ) as e:  # опоздавший шаг бот пропускает и в жизни — в истории его тоже нет
+                    except StepSkipped as e:
+                        # опоздавший шаг бот пропускает и в жизни — в истории его тоже нет
+                        await close_step_jobs(s, emp_id, kind, "cancelled")
                         print(f"  шаг {kind}: {e}")
                         continue
+                    await close_step_jobs(s, emp_id, kind, "done")
                 await answer_survey(emp_id, payload)
                 print(f"  шаг {kind}: отвечен")
             # даём фоновому NLP-анализу сообщений завершиться до сдвига дат
