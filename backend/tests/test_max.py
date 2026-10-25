@@ -122,7 +122,7 @@ def test_poll_retries_same_batch_after_queue_failure(tmp_path, monkeypatch):
 
     async def poll(marker):
         requested.append(marker)
-        if len(requested) < 3:
+        if len(requested) == 1:
             assert _load_marker() == 10
             return [1, 2], 20
         raise asyncio.CancelledError
@@ -138,7 +138,7 @@ def test_poll_retries_same_batch_after_queue_failure(tmp_path, monkeypatch):
             pass
 
     asyncio.run(run())
-    assert requested == [10, 10, 20]
+    assert requested == [10, 20]
     assert enqueued == [1, 2, 1, 2]
     assert _load_marker() == 20
 
@@ -171,3 +171,82 @@ def test_poll_null_marker_preserves_known_position(tmp_path, monkeypatch):
     asyncio.run(run())
     assert requested == [10, 10]
     assert _load_marker() == 10
+
+
+def test_first_poll_keeps_batch_until_queue_recovers(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.bot import inbox, updates
+
+    monkeypatch.setattr(settings(), "data_dir", tmp_path)
+    requested, enqueued = [], []
+
+    async def enqueue(event):
+        enqueued.append(event)
+        if len(enqueued) == 2:
+            raise OSError("queue unavailable")
+
+    async def poll(marker):
+        requested.append(marker)
+        if len(requested) == 1:
+            return [1, 2], 20
+        assert enqueued == [1, 2, 1, 2]
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(inbox, "enqueue", enqueue)
+    monkeypatch.setattr(updates, "max_client", lambda: SimpleNamespace(poll=poll))
+    monkeypatch.setattr(updates.asyncio, "sleep", AsyncMock())
+
+    async def run():
+        try:
+            await updates.poll_loop()
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert requested == [None, 20]
+    assert _load_marker() == 20
+
+
+def test_poll_keeps_batch_after_checkpoint_write_failure(tmp_path, monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.bot import inbox, updates
+
+    monkeypatch.setattr(settings(), "data_dir", tmp_path)
+    _marker_file().write_text("10")
+    replace = Path.replace
+    attempts, requested = [], []
+
+    def fail_once(path, target):
+        attempts.append(path)
+        if len(attempts) == 1:
+            raise OSError("checkpoint unavailable")
+        assert _load_marker() == 10
+        return replace(path, target)
+
+    async def poll(marker):
+        requested.append(marker)
+        if len(requested) == 1:
+            return [1], 20
+        raise asyncio.CancelledError
+
+    enqueue = AsyncMock()
+    monkeypatch.setattr(Path, "replace", fail_once)
+    monkeypatch.setattr(inbox, "enqueue", enqueue)
+    monkeypatch.setattr(updates, "max_client", lambda: SimpleNamespace(poll=poll))
+    monkeypatch.setattr(updates.asyncio, "sleep", AsyncMock())
+
+    async def run():
+        try:
+            await updates.poll_loop()
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert requested == [10, 20]
+    assert enqueue.await_count == 2
+    assert _load_marker() == 20

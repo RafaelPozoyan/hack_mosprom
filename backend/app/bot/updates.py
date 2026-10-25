@@ -277,9 +277,12 @@ async def poll_loop() -> None:
 
     client = max_client()
     marker = _load_marker()
+    batch = None
     while True:
         try:
-            updates, next_marker = await client.poll(marker)
+            if batch is None:
+                batch = await client.poll(marker)
+            updates, next_marker = batch
             for upd in updates:
                 await enqueue(upd)
             if next_marker is not None:
@@ -288,6 +291,7 @@ async def poll_loop() -> None:
                 pending.write_text(str(next_marker))
                 pending.replace(path)
                 marker = next_marker
+            batch = None
         except Exception:
             log.exception("MAX polling failed")
             await asyncio.sleep(5)
