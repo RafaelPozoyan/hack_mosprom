@@ -31,6 +31,13 @@ class FakeSession:
     async def commit(self):
         self.commits += 1
 
+    async def rollback(self):
+        pass
+
+    async def refresh(self, instance):
+        # В этой заглушке объекты общие; конкурентное перечитывание проверяется на PostgreSQL.
+        assert instance is self.ticket or instance is self.ticket.employee
+
 
 @pytest.fixture
 def case(monkeypatch):

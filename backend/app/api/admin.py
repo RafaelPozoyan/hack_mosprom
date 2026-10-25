@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import scheduler
 from app.analytics import digest, metrics, support
 from app.analytics.sentiment import manager_topics
-from app.bot import backlog, escalation, progress, response_time
+from app.bot import backlog, escalation, progress, response_time, updates
 from app.bot.progress import StepBlocked
 from app.bot.scenario import (
     add_months,
@@ -672,17 +672,19 @@ class ReplyIn(BaseModel):
 @router.post("/tickets/{tid}/reply")
 async def reply_ticket(tid: int, body: ReplyIn, s: AsyncSession = Depends(get_session)):
     t = await _ticket(s, tid)
-    try:
-        await escalation.hr_reply(s, t, body.text, body.author)
-    except escalation.TicketClosedError as e:
-        raise HTTPException(409, str(e)) from e
+    async with updates.ticket_dialog(s, t):
+        try:
+            await escalation.hr_reply(s, t, body.text, body.author)
+        except escalation.TicketClosedError as e:
+            raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
 
 @router.post("/tickets/{tid}/close")
 async def close_ticket(tid: int, s: AsyncSession = Depends(get_session)):
     t = await _ticket(s, tid)
-    await escalation.close(s, t, notify=t.kind != "alert")
+    async with updates.ticket_dialog(s, t):
+        await escalation.close(s, t, notify=t.kind != "alert")
     return {"ok": True}
 
 

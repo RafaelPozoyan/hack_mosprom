@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 from collections import defaultdict
-from contextlib import AsyncExitStack, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +37,22 @@ class EventContext:
         if employee_id not in self.employees:
             await self.locks.enter_async_context(_locks[employee_id])
             self.employees.add(employee_id)
+
+
+@asynccontextmanager
+async def ticket_dialog(s: AsyncSession, t: Ticket, *, context: EventContext | None = None):
+    """Ответ HR и закрытие используют тот же замок, что сообщения новичка и планировщик."""
+    employee_id = t.employee_id
+    if context:
+        await context.lock_employee(employee_id)
+    else:
+        # До замка только читали: не занимаем соединение, нужное текущему владельцу диалога.
+        await s.rollback()
+    async with nullcontext() if context else _locks[employee_id]:
+        # Обращение и сотрудник могли измениться, пока мы ждали завершения диалога.
+        await s.refresh(t)
+        await s.refresh(t.employee)
+        yield
 
 
 def _after_event(context: EventContext | None, callback, *args) -> None:
@@ -229,18 +245,17 @@ async def _on_hr_chat(msg: dict, text: str, *, context: EventContext | None = No
                     )
                 )
             return
-        if context:
-            await context.lock_employee(t.employee_id)
-            await s.refresh(t)
-            await s.refresh(t.employee)
-        author = (msg.get("sender") or {}).get("first_name") or (msg.get("sender") or {}).get("name") or "HR"
-        if text.lower() in ("/close", "/закрыть"):
-            await escalation.close(s, t)
-        else:
-            try:
-                await escalation.hr_reply(s, t, text, author)
-            except escalation.TicketClosedError as e:
-                await channels.post_hr_chat(OutMessage(text=f"Обращение #{t.id}: {e}"))
+        async with ticket_dialog(s, t, context=context):
+            author = (
+                (msg.get("sender") or {}).get("first_name") or (msg.get("sender") or {}).get("name") or "HR"
+            )
+            if text.lower() in ("/close", "/закрыть"):
+                await escalation.close(s, t)
+            else:
+                try:
+                    await escalation.hr_reply(s, t, text, author)
+                except escalation.TicketClosedError as e:
+                    await channels.post_hr_chat(OutMessage(text=f"Обращение #{t.id}: {e}"))
 
 
 def _marker_file() -> Path:
