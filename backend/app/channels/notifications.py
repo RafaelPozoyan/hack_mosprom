@@ -18,6 +18,7 @@ from app.scheduler import CANDIDATE_BATCH, MAX_ATTEMPTS
 
 log = logging.getLogger(__name__)
 LOCK_NAMESPACE = 0x4B4F5255  # KORU: отдельно от jobs и блокировок сотрудника
+WORKERS = 2  # медленная отправка одному получателю не задерживает остальных
 POLL_INTERVAL_S = 1  # как у остальных очередей: проверка раз в секунду
 ACTIVE = ("pending", "running")
 
@@ -38,8 +39,9 @@ async def enqueue(
         raise ValueError("Нужен ровно один получатель MAX")
     recipient = f"user:{user_id}" if user_id is not None else f"chat:{chat_id}"
     key = f"{recipient}:{dedup_key or uuid4().hex}"
-    # Порядок id соответствует порядку commit даже при двух отправителях одному получателю.
-    await s.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(f"notify:{recipient}", 0))))
+    # Короткие транзакции постановки сериализованы: порядок A→B/B→A не создаёт deadlock.
+    # Ключ 0 не используется доставщиком; этот замок никогда не удерживается во время сети.
+    await s.execute(select(func.pg_advisory_xact_lock(LOCK_NAMESPACE, 0)))
     ident = await s.scalar(
         insert(MaxNotification)
         .values(
@@ -86,13 +88,13 @@ async def _confirm(s: AsyncSession, row: MaxNotification, delivered: bool) -> No
                 ticket.hr_chat_mid = row.max_mid
         if row.kind == "reminder" and row.ticket_id:
             deadline = await s.get(TicketDeadline, row.ticket_id, with_for_update=True)
-            latest = await s.scalar(
-                select(func.max(MaxNotification.id)).where(
-                    MaxNotification.ticket_id == row.ticket_id,
-                    MaxNotification.kind == "reminder",
-                )
-            )
-            if deadline and latest == row.id:
+            # Старое подтверждение не меняет результат нового напоминания, даже если новое
+            # не попало в очередь из-за отключённого MAX. Время — ключ конкретного события.
+            if (
+                deadline
+                and deadline.reminded_at
+                and row.dedup_key.endswith(f":reminder:{row.ticket_id}:{deadline.reminded_at.isoformat()}")
+            ):
                 deadline.reminder_delivered = delivered
 
 
