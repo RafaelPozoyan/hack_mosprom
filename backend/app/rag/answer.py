@@ -138,7 +138,33 @@ def context_block(hits: list[Hit]) -> str:
     return "\n\n".join(f"[{i}] {h.heading}\n{h.text}" for i, h in enumerate(hits, 1))
 
 
+# Ответ при той же базе знаний не меняется (температура 0), а поиск с реранкером на CPU обрабатывает вопросы по очереди:
+# повтор вопроса отдаём из памяти. Важно для демо, где 5–10 человек одновременно задают одни и те же вопросы.
+_answers: dict[tuple[str, str, str], Result] = {}
+ANSWER_CACHE_SIZE = 500
+
+
+def forget_answers() -> None:
+    """База знаний изменилась — запомненные ответы могли устареть."""
+    _answers.clear()
+
+
 async def answer(s: AsyncSession, question: str, site: str = "", form: str = "ты") -> Result:
+    key = (" ".join(_words(question)), site, form)
+    if key in _answers:
+        return _answers[key]
+    res = await _answer(s, question, site, form)
+    if res.reason not in (
+        "search_error",
+        "llm_error",
+    ):  # сбой сервиса не запоминаем: следующий раз — новая попытка
+        if len(_answers) >= ANSWER_CACHE_SIZE:
+            _answers.clear()
+        _answers[key] = res
+    return res
+
+
+async def _answer(s: AsyncSession, question: str, site: str = "", form: str = "ты") -> Result:
     try:
         hits = await search(s, question, site)
     except Exception:

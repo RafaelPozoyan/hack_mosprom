@@ -51,6 +51,7 @@ from app.models import (
 )
 from app.rag import ingest
 from app.rag.answer import answer as rag_answer
+from app.rag.answer import forget_answers
 from app.rag.search import search
 
 
@@ -731,6 +732,7 @@ async def upload_document(file: UploadFile = File(...), title: str = Form(""), s
 async def delete_document(doc_id: int, s: AsyncSession = Depends(get_session)):
     await s.execute(delete(Document).where(Document.id == doc_id))
     await s.commit()
+    forget_answers()
     return {"ok": True}
 
 

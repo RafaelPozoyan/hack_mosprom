@@ -404,3 +404,35 @@ def test_survey_ticket_subject_starts_with_newcomer_words():
 
     subject = surveys.ticket_subject("1) С каким настроением ты приходишь на работу?", {"label": "Уже устал"})
     assert subject == "Уже устал — С каким настроением ты приходишь на работу?"
+
+
+def test_answer_cache_reuses_same_question_until_knowledge_changes(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.rag import answer as rag
+
+    rag.forget_answers()
+    ok = rag.Result(True, "28 дней", "ok", 0.9)
+    inner = AsyncMock(return_value=ok)
+    monkeypatch.setattr(rag, "_answer", inner)
+    assert asyncio.run(rag.answer(None, "Сколько дней отпуска?", "GTP", "ты")) is ok
+    assert asyncio.run(rag.answer(None, "  сколько дней ОТПУСКА ", "GTP", "ты")) is ok
+    assert inner.await_count == 1  # повтор того же вопроса — без поиска и модели
+    asyncio.run(rag.answer(None, "Сколько дней отпуска?", "LUZ", "ты"))
+    assert inner.await_count == 2  # другая площадка — свой ответ
+    rag.forget_answers()
+    asyncio.run(rag.answer(None, "Сколько дней отпуска?", "GTP", "ты"))
+    assert inner.await_count == 3  # база знаний изменилась — считаем заново
+
+
+def test_answer_cache_skips_service_errors(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from app.rag import answer as rag
+
+    rag.forget_answers()
+    inner = AsyncMock(return_value=rag.Result(False, "", "llm_error", None))
+    monkeypatch.setattr(rag, "_answer", inner)
+    asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
+    asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
+    assert inner.await_count == 2  # сбой сервиса не запоминаем: следующий раз — новая попытка

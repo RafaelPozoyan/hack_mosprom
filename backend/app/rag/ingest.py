@@ -301,4 +301,7 @@ async def ingest(
         log.exception("ingest failed: %s", filename)
         doc.status, doc.error = "error", str(e)[:1000]
     await s.commit()
+    from app.rag.answer import forget_answers  # answer → search → ingest: импорт здесь, иначе цикл
+
+    forget_answers()
     return doc
