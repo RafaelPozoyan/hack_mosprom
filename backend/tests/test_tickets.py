@@ -173,7 +173,7 @@ def test_open_dialog_does_not_duplicate_ticket(case, monkeypatch, subject, forwa
 @pytest.mark.parametrize(
     ("problem", "subject"),
     [
-        ("Есть ли парковка у офиса?", "Просит связаться с рекрутером: Есть ли парковка у офиса?"),
+        ("Есть ли парковка у офиса?", "Есть ли парковка у офиса?"),
         (None, "Сотрудник просит связаться с рекрутером"),
     ],
 )
