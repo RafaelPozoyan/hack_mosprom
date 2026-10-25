@@ -61,3 +61,83 @@ def test_poll_marker_survives_restart(tmp_path, monkeypatch):
     assert _load_marker() == 1792845123
     _marker_file().write_text("мусор")
     assert _load_marker() is None  # испорченный файл не роняет поллинг
+
+
+def test_poll_marker_advances_only_after_entire_batch_is_saved(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.bot import inbox, updates
+
+    monkeypatch.setattr(settings(), "data_dir", tmp_path)
+    _marker_file().write_text("10")
+    first, second = {"event": 1}, {"event": 2}
+    saved, requested = [], []
+
+    async def enqueue(event):
+        assert _load_marker() == 10
+        saved.append(event)
+
+    async def poll(marker):
+        requested.append(marker)
+        if len(requested) == 1:
+            return [first, second], 20
+        assert saved == [first, second]
+        assert _load_marker() == 20
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(inbox, "enqueue", enqueue)
+    monkeypatch.setattr(updates, "max_client", lambda: SimpleNamespace(poll=poll))
+    direct = AsyncMock()
+    monkeypatch.setattr(updates, "process_max_update", direct)
+
+    async def run():
+        try:
+            await updates.poll_loop()
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert requested == [10, 20]
+    direct.assert_not_awaited()
+
+
+def test_poll_retries_same_batch_after_queue_failure(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.bot import inbox, updates
+
+    monkeypatch.setattr(settings(), "data_dir", tmp_path)
+    _marker_file().write_text("10")
+    requested, enqueued = [], []
+    failed = False
+
+    async def enqueue(event):
+        nonlocal failed
+        enqueued.append(event)
+        if event == 2 and not failed:
+            failed = True
+            raise OSError("queue unavailable")
+
+    async def poll(marker):
+        requested.append(marker)
+        if len(requested) < 3:
+            assert _load_marker() == 10
+            return [1, 2], 20
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(inbox, "enqueue", enqueue)
+    monkeypatch.setattr(updates, "max_client", lambda: SimpleNamespace(poll=poll))
+    monkeypatch.setattr(updates.asyncio, "sleep", AsyncMock())
+
+    async def run():
+        try:
+            await updates.poll_loop()
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+    assert requested == [10, 10, 20]
+    assert enqueued == [1, 2, 1, 2]
+    assert _load_marker() == 20

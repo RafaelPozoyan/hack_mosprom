@@ -271,16 +271,23 @@ def _load_marker() -> int | None:
 
 async def poll_loop() -> None:
     """Long polling — для разработки без публичного HTTPS (в проде MAX рекомендует только webhook).
-    Позиция чтения хранится в файле: перезапуск не повторяет уже обработанные события (повторное приветствие, ответы)."""
+    Позиция чтения сохраняется только после записи всей пачки во входящую очередь.
+    Повтор после сбоя безопасен: enqueue удаляет дубли по идентификатору события."""
+    from app.bot.inbox import enqueue
+
     client = max_client()
     marker = _load_marker()
     while True:
         try:
-            updates, marker = await client.poll(marker)
-            if marker is not None:
-                _marker_file().write_text(str(marker))
+            updates, next_marker = await client.poll(marker)
             for upd in updates:
-                asyncio.create_task(process_max_update(upd))
+                await enqueue(upd)
+            if next_marker is not None:
+                path = _marker_file()
+                pending = path.with_suffix(".tmp")
+                pending.write_text(str(next_marker))
+                pending.replace(path)
+            marker = next_marker
         except Exception:
             log.exception("MAX polling failed")
             await asyncio.sleep(5)
