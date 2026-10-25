@@ -118,6 +118,19 @@ def test_reply_and_repeated_close_preserve_dialog_state(case):
     case.publish.assert_called_once_with(escalation.ADMIN_FEED, {"type": "ticket_closed", "id": 7})
 
 
+def test_message_in_open_dialog_is_confirmed_with_way_back(case):
+    case.emp.state["ticket_id"] = 7
+    asyncio.run(
+        escalation.forward_from_employee(case.session, case.emp, "А пропуск на машину нужен?", confirm=True)
+    )
+    case.post.assert_awaited_once()
+    out = case.send.await_args.args[2]
+    assert out.text.startswith("Переслал HR")
+    assert "нажмите" in out.text
+    assert out.buttons[0][0].payload == "a:close_dialog"
+    assert case.send.await_args.kwargs["ticket_id"] == 7
+
+
 def test_closing_another_ticket_preserves_current_dialog(case):
     case.emp.state["ticket_id"] = 8
     asyncio.run(escalation.close(case.session, case.ticket))
