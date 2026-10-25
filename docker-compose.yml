@@ -1,13 +1,21 @@
 # Корсик — полностью локальный контур: данные и модели не покидают периметр компании.
-# Запуск всего: docker compose --profile local-llm up -d   (без профиля — LLM внешняя, см. .env)
+# Полное демо: docker compose --profile local-llm --profile app up -d --build --wait (см. README).
 name: korsik
 
 # --max-batch-tokens 2048: прогрев TEI резервирует память под максимальный батч (по умолчанию 16384 токена — >10 ГБ ОЗУ
 # на модель); наши чанки короче ~600 токенов, поэтому лимит не влияет на качество, только на пиковую память.
 x-tei: &tei
   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+  platform: linux/amd64 # CPU-образ TEI не содержит arm64; на Apple Silicon нужна эмуляция.
   volumes: [hf-cache:/data]
   cpus: 4
+  healthcheck:
+    test: ['CMD', 'curl', '-fsS', '--max-time', '3', 'http://127.0.0.1/health']
+    interval: 10s
+    timeout: 5s
+    # На первом запуске модель скачивается; окно ожидания — запас команды, не замер скорости.
+    start_period: 30m
+    retries: 3
   restart: unless-stopped
 
 services:
@@ -41,6 +49,18 @@ services:
     volumes:
       # в образе Tesseract только с английским; русская модель tessdata_best (github.com/tesseract-ocr/tessdata_best)
       - ./ocr/rus.traineddata:/usr/share/tesseract/tessdata/rus.traineddata:ro
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          'import urllib.request; urllib.request.urlopen("http://127.0.0.1:5001/ready", timeout=3)',
+        ]
+      interval: 10s
+      timeout: 5s
+      start_period: 30m
+      retries: 3
     restart: unless-stopped
 
   llm: # GigaChat 3.1 Lightning (MoE 10B / 1.8B активных, MIT) — работает даже на CPU
@@ -51,6 +71,12 @@ services:
       -c 16384 -np 2 --jinja -a gigachat-3.1-lightning
     volumes: ['${MODELS_DIR:-~/.cache/polyplastic-models/gigachat31}:/models:ro']
     ports: ['8081:8081']
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', '--max-time', '3', 'http://127.0.0.1:8081/health']
+      interval: 10s
+      timeout: 5s
+      start_period: 30m
+      retries: 3
     restart: unless-stopped
 
   api:
@@ -69,6 +95,17 @@ services:
       - ./materials:/materials:ro # материалы кейса (в git не хранятся) для scripts/seed.py
     depends_on:
       db: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'python',
+          '-c',
+          'import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=3)',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
 volumes:
