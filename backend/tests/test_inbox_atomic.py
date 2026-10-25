@@ -315,7 +315,7 @@ async def test_dialog_lock_is_held_until_inbox_commit(db, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fail", [False, True])
-async def test_comment_analysis_starts_only_after_commit(db, monkeypatch, fail):
+async def test_comment_analysis_is_saved_atomically_with_answer(db, monkeypatch, fail):
     async with db.session() as s:
         ans = SurveyAnswer(employee_id=1, survey_id="day3", question_id="docs", value={"option": "c"})
         msg = Message(employee_id=1, direction="in", author="employee", text="Нужна помощь с доступом")
@@ -327,27 +327,63 @@ async def test_comment_analysis_starts_only_after_commit(db, monkeypatch, fail):
             "await": {"kind": "survey_comment", "answer_id": ans.id, "candidate_id": msg.id, "qid": "docs"},
         }
         await s.commit()
-    analysis = Mock()
-    monkeypatch.setattr(surveys, "analyze_later", analysis)
     process = inbox.process_max_update
 
     async def finish(*args, **kwargs):
         await process(*args, **kwargs)
-        analysis.assert_not_called()
+        async with db.session() as observer:
+            assert await observer.scalar(select(func.count()).select_from(AnalysisTask)) == 0
         if fail:
             raise RuntimeError("interrupted before inbox commit")
 
     monkeypatch.setattr(inbox, "process_max_update", finish)
     await inbox.enqueue(callback(f"a:confirm_comment:{msg.id}"))
     assert await inbox.process_one()
-    if fail:
-        analysis.assert_not_called()
-        async with db.session() as s:
-            assert (await s.get(SurveyAnswer, ans.id)).comment is None
-    else:
-        analysis.assert_called_once_with(1, msg.text, "survey", None)
-        async with db.session() as s:
-            assert (await s.get(SurveyAnswer, ans.id)).comment == msg.text
+    async with db.session() as s:
+        assert (await s.get(SurveyAnswer, ans.id)).comment == (None if fail else msg.text)
+        assert await s.scalar(select(func.count()).select_from(AnalysisTask)) == (0 if fail else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fail", [False, True])
+async def test_question_analysis_is_saved_atomically_with_question(db, monkeypatch, fail):
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        emp.state = {}
+        await s.commit()
+    monkeypatch.setattr(
+        dialog,
+        "rag_answer",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                answered=False, reason="low_score", best_score=0.001, text="", sources=[]
+            )
+        ),
+    )
+    process = inbox.process_max_update
+
+    async def finish(*args, **kwargs):
+        await process(*args, **kwargs)
+        async with db.session() as observer:
+            assert await observer.scalar(select(func.count()).select_from(AnalysisTask)) == 0
+        if fail:
+            raise RuntimeError("interrupted before inbox commit")
+
+    monkeypatch.setattr(inbox, "process_max_update", finish)
+    await inbox.enqueue(
+        {
+            "update_type": "message_created",
+            "message": {
+                "sender": {"user_id": 1},
+                "recipient": {"chat_id": 1},
+                "body": {"mid": "question-analysis", "text": "Где найти документы?"},
+            },
+        }
+    )
+    assert await inbox.process_one()
+    async with db.session() as s:
+        assert await s.scalar(select(func.count()).select_from(Question)) == (0 if fail else 1)
+        assert await s.scalar(select(func.count()).select_from(AnalysisTask)) == (0 if fail else 1)
 
 
 @pytest.mark.asyncio

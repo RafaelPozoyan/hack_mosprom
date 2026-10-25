@@ -467,34 +467,3 @@ def test_answer_cache_keeps_only_stable_refusals(monkeypatch, reason, calls):
     asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
     # отказ поиска при той же базе повторится; сбой сервиса и отказ проверки ответа — следующая попытка может пройти
     assert inner.await_count == calls
-
-
-def test_analysis_skips_deleted_employee(monkeypatch):
-    from contextlib import asynccontextmanager
-    from unittest.mock import AsyncMock
-
-    from app import db
-    from app.analytics import sentiment
-
-    class Empty:
-        async def get(self, model, ident):
-            return None  # новичка удалили, пока ответ ждал разбора
-
-    @asynccontextmanager
-    async def session():
-        yield Empty()
-
-    monkeypatch.setattr(db, "session", session)
-    analyze = AsyncMock()
-    save = AsyncMock()
-    monkeypatch.setattr(sentiment, "analyze_text", analyze)
-    monkeypatch.setattr(sentiment, "save_and_react", save)
-    monkeypatch.setattr(sentiment, "last_bot_text", AsyncMock(return_value=""))
-
-    async def run():
-        sentiment.analyze_later(404, "Уже устал", "chat")
-        await asyncio.sleep(0.05)
-
-    asyncio.run(run())
-    analyze.assert_not_awaited()
-    save.assert_not_awaited()

@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.dialects.postgresql import insert
 
 from app import scheduler
+from app.analytics import analysis_queue
 from app.api import admin, demo, hr_import, support, team
 from app.bot import inbox
 from app.bot.scenario import scenario
@@ -69,6 +70,7 @@ async def lifespan(app: FastAPI):
     else:
         log.info("MAX_TOKEN не задан — работает демо-канал в веб-панели")
     tasks = [asyncio.create_task(scheduler.loop()), asyncio.create_task(notifications.loop())]
+    tasks.append(asyncio.create_task(analysis_queue.loop()))
     tasks.extend(asyncio.create_task(outbox.loop()) for _ in range(outbox.WORKERS))
     if client:
         tasks.extend(asyncio.create_task(inbox.loop()) for _ in range(inbox.WORKERS))

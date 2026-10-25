@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
-from app.analytics.sentiment import analyze_later
+from app.analytics.analysis_queue import enqueue as queue_analysis
 from app.bot import escalation, followup, progress, survey_input, surveys
 from app.bot.scenario import (
     button_rows,
@@ -22,7 +22,6 @@ from app.bot.scenario import (
     step,
 )
 from app.channels import Button, InEvent, OutMessage
-from app.db import after_commit
 from app.models import Employee, Job, Message, Question, SurveyAnswer, Ticket
 from app.rag.answer import answer as rag_answer
 
@@ -148,6 +147,9 @@ async def answer_question(s: AsyncSession, emp: Employee, text: str, log_questio
         sources=res.sources,
     )
     s.add(q)
+    await s.flush()
+    if log_question:
+        await queue_analysis(s, emp, text, "chat", q.id)
     await s.commit()
     if res.answered:
         refs = list(dict.fromkeys(src["heading"] for src in res.sources))
@@ -175,8 +177,6 @@ async def answer_question(s: AsyncSession, emp: Employee, text: str, log_questio
                 buttons=surveys.offer_buttons(emp, ["relay", "recruiter"], question_id=q.id),
             ),
         )
-    if log_question:
-        after_commit(s, analyze_later, emp.id, text, "chat", question_id=q.id)
 
 
 async def command(s: AsyncSession, emp: Employee, cmd: str) -> None:
