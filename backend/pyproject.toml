@@ -1,6 +1,6 @@
 [project]
 name = "korsik"
-version = "0.2.1"
+version = "0.3.0"
 description = "Корсик — ИИ-ассистент адаптации сотрудников Группы ПОЛИПЛАСТИК в мессенджере MAX"
 requires-python = ">=3.13"
 dependencies = [
