@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    CheckConstraint,
     Computed,
     Date,
     DateTime,
@@ -133,6 +134,32 @@ class MaxDelivery(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_max_delivery_user_order", "user_id", "message_id", "status"),)
+
+
+class MaxNotification(Base):
+    """Неизменяемое уведомление персоналу, HR-группе или ответ при привязке MAX."""
+
+    __tablename__ = "max_notifications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dedup_key: Mapped[str] = mapped_column(String(200), unique=True)
+    user_id: Mapped[int | None] = mapped_column(BigInteger)
+    chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    kind: Mapped[str] = mapped_column(String(20), default="notification")
+    ticket_id: Mapped[int | None] = mapped_column(ForeignKey("tickets.id", ondelete="CASCADE"))
+    message_id: Mapped[int | None] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"))
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    max_mid: Mapped[str | None] = mapped_column(String(100))
+    error: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        CheckConstraint("(user_id IS NULL) <> (chat_id IS NULL)", name="one_notification_recipient"),
+        Index("ix_max_notifications_due", "status", "available_at"),
+        Index("ix_max_notifications_user_order", "user_id", "id", "status"),
+        Index("ix_max_notifications_chat_order", "chat_id", "id", "status"),
+    )
 
 
 class SurveyAnswer(Base):

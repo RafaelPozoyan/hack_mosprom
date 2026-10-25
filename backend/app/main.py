@@ -16,7 +16,7 @@ from app.api import admin, demo, hr_import, support, team
 from app.bot import inbox
 from app.bot.scenario import scenario
 from app.bot.updates import poll_loop
-from app.channels import outbox
+from app.channels import notifications, outbox
 from app.channels.max import max_client
 from app.config import settings
 from app.db import init_db, session
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
         log.info("MAX: long polling (dev)")
     else:
         log.info("MAX_TOKEN не задан — работает демо-канал в веб-панели")
-    tasks = [asyncio.create_task(scheduler.loop())]
+    tasks = [asyncio.create_task(scheduler.loop()), asyncio.create_task(notifications.loop())]
     tasks.extend(asyncio.create_task(outbox.loop()) for _ in range(outbox.WORKERS))
     if client:
         tasks.extend(asyncio.create_task(inbox.loop()) for _ in range(inbox.WORKERS))
