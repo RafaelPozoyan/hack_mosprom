@@ -219,7 +219,7 @@ function Ask() {
   }
   // Ответы есть в открытой памятке (backend/kb): примеры работают и без документов компании
   const examples = [
-    'Какие документы нужны для оформления?',
+    'Когда руководитель передаст адаптационный план?',
     'Сколько длится испытательный срок?',
     'Кто поможет, если возникнут вопросы?',
   ]
@@ -237,7 +237,7 @@ function Ask() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && run()}
-          placeholder="Например: как оформить отпуск?"
+          placeholder="Например: какие документы нужны для оформления?"
           className={clsx(inputCls, 'flex-1')}
         />
         <Btn onClick={() => run()} disabled={busy || !q.trim()}>
