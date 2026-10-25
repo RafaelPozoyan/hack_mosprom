@@ -270,3 +270,33 @@ async def test_unknown_recommendation_or_employee_is_rejected(db):
     ).status_code == 404
     db.client.send.assert_not_awaited()
     assert await staff_messages(db) == 0
+
+
+@pytest.mark.asyncio
+async def test_manager_upcoming_skips_steps_already_sent(db):
+    from datetime import UTC, datetime
+
+    from app.bot.scenario import timeline
+
+    async with db.session() as s:
+        emp = await s.get(Employee, 1)
+        future = [
+            st
+            for st, run_at in timeline(emp)
+            if run_at and st.get("audience", "employee") == "employee" and run_at > datetime.now(UTC)
+        ]
+        s.add(
+            Message(
+                employee_id=1,
+                direction="out",
+                author="bot",
+                text="Шаг отправлен досрочно",
+                step_id=future[0]["id"],
+            )
+        )
+        await s.commit()
+    upcoming = (await db.http.get("/api/m/manager-code/employees/1")).json()["upcoming"]
+    assert future[0].get("title", future[0]["id"]) not in [
+        u["title"] for u in upcoming
+    ]  # досрочно пройденный шаг
+    assert upcoming[0]["title"] == future[1].get("title", future[1]["id"])
