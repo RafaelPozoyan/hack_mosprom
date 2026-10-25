@@ -163,15 +163,13 @@ async def answer_question(s: AsyncSession, emp: Employee, text: str, log_questio
         )
     else:
         fb = scenario()["fallback"]
-        emp.state = {**emp.state, "last_problem": text}
-        await s.commit()
         await channels.send(
             s,
             emp,
             OutMessage(
                 text=render(fb["text"], emp),
                 image=fb.get("image"),
-                buttons=surveys.offer_buttons(emp, ["relay", "recruiter"]),
+                buttons=surveys.offer_buttons(emp, ["relay", "recruiter"], question_id=q.id),
             ),
         )
     if log_question:
@@ -295,20 +293,29 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
         await action(s, emp, btn["action"])
 
 
+async def own_question(s: AsyncSession, emp: Employee, arg: str) -> Question | None:
+    """Вопрос из кнопки — только если он этого сотрудника."""
+    q = await s.get(Question, int(arg)) if arg.isdigit() else None
+    return q if q and q.employee_id == emp.id else None
+
+
 async def action(s: AsyncSession, emp: Employee, act: str) -> None:
     name, _, arg = act.partition(":")
     if name in ("relay", "relay_hr"):
         await escalation.ask_relay(s, emp)
     elif name == "relay_q":
-        q = await s.get(Question, int(arg))
+        q = await own_question(s, emp, arg)
         await escalation.open_dialog(
             s, emp, f"Вопрос сотрудника: {q.text}" if q else "Вопрос сотрудника", kind="question"
         )
     elif name == "recruiter":
-        # Тема — вопрос, на который Корсик не ответил, как у «Передать проблему»: без него HR и карточка
-        # не знают, о чём речь. last_problem не сбрасываем: повторное нажатие даст ту же тему и то же обращение.
-        problem = emp.state.get("last_problem") or "Сотрудник просит связаться с рекрутером"
-        await escalation.open_dialog(s, emp, problem, kind="problem")
+        # Кнопка под отказом несёт id вопроса: тема — сам вопрос, как у «Передать проблему», и обе кнопки
+        # ведут в одно обращение. Без id (опрос, меню) тема общая.
+        q = await own_question(s, emp, arg) if arg else None
+        if q:
+            await escalation.open_dialog(s, emp, f"Вопрос сотрудника: {q.text}", kind="question")
+        else:
+            await escalation.open_dialog(s, emp, "Сотрудник просит связаться с рекрутером", kind="problem")
     elif name == "recruiter_voice":
         problem = emp.state.get("last_problem") or ""
         await escalation.create_ticket(

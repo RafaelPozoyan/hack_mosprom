@@ -32,18 +32,21 @@ def options(emp: Employee, q: dict) -> list[dict]:
     return [o for o in q.get("options", []) if not o.get("sites") or emp.site_code in o["sites"]]
 
 
-def offer_buttons(emp: Employee, offer: list[str]) -> list[list[Button]]:
+def offer_buttons(emp: Employee, offer: list[str], question_id: int | None = None) -> list[list[Button]]:
+    """question_id — вопрос, на который Корсик не ответил: обе кнопки передают HR именно его."""
     rows = []
     for o in offer or []:
         if o == "relay":
-            rows.append([Button("📨 Передать проблему через Корсика", payload="a:relay")])
+            payload = f"a:relay_q:{question_id}" if question_id else "a:relay"
+            rows.append([Button("📨 Передать проблему через Корсика", payload=payload)])
         elif o == "recruiter":
             link = emp.recruiter.max_link if emp.recruiter else None
+            payload = f"a:recruiter:{question_id}" if question_id else "a:recruiter"
             rows.append(
                 [
                     Button("🧑‍💼 Связаться с рекрутером", url=link)
                     if link
-                    else Button("🧑‍💼 Связаться с рекрутером", payload="a:recruiter")
+                    else Button("🧑‍💼 Связаться с рекрутером", payload=payload)
                 ]
             )
         elif o == "recruiter_voice":
