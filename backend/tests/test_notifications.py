@@ -239,21 +239,32 @@ async def test_delete_during_send_removes_notification_without_retry(db, model):
 
 @pytest.mark.asyncio
 async def test_opposite_recipient_orders_do_not_deadlock(db):
-    entered = asyncio.Event()
+    pid = asyncio.get_running_loop().create_future()
 
     async def other():
         async with db.session() as s:
-            entered.set()
+            pid.set_result(await s.scalar(select(func.pg_backend_pid())))
             await notifications.enqueue(s, OutMessage(text="B"), user_id=2)
             await notifications.enqueue(s, OutMessage(text="B"), user_id=1)
             await s.commit()
+
+    async def wait_for_lock():
+        other_pid = await pid
+        async with db.session() as observer:
+            while True:
+                await observer.execute(select(func.pg_stat_clear_snapshot()))
+                if await observer.scalar(
+                    text("SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": other_pid},
+                ):
+                    return
 
     task = None
     try:
         async with db.session() as s:
             await notifications.enqueue(s, OutMessage(text="A"), user_id=1)
             task = asyncio.create_task(other())
-            await asyncio.wait_for(entered.wait(), timeout=2)
+            await asyncio.wait_for(wait_for_lock(), timeout=5)
             await asyncio.wait_for(notifications.enqueue(s, OutMessage(text="A"), user_id=2), timeout=2)
             await s.commit()
         await asyncio.wait_for(task, timeout=2)

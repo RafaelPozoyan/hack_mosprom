@@ -89,7 +89,7 @@ async def _confirm(s: AsyncSession, row: MaxNotification, delivered: bool) -> No
         if row.kind == "reminder" and row.ticket_id:
             deadline = await s.get(TicketDeadline, row.ticket_id, with_for_update=True)
             # Старое подтверждение не меняет результат нового напоминания, даже если новое
-            # не попало в очередь из-за отключённого MAX. Время — ключ конкретного события.
+            # не попало в очередь из-за отсутствия получателя. Время — ключ конкретного события.
             if (
                 deadline
                 and deadline.reminded_at
