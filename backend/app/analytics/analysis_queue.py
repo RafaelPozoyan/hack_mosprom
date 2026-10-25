@@ -37,12 +37,12 @@ async def enqueue(s, emp, text: str, source: str, source_id: int, extra_flags=No
     )
 
 
-async def _retry(task_id: int, error: Exception) -> None:
+async def _retry(task_id: int, error: Exception | str) -> None:
     async with session() as s, s.begin():
         row = await s.get(AnalysisTask, task_id)
         if row:
             row.status = "failed" if row.attempts >= MAX_ATTEMPTS else "pending"
-            row.error = type(error).__name__  # без текста сотрудника и ответа модели
+            row.error = error if isinstance(error, str) else type(error).__name__
             row.available_at = utcnow() + timedelta(minutes=row.attempts)
 
 
@@ -108,6 +108,9 @@ async def _process(task_id: int) -> None:
             error = type(exc).__name__
         else:
             error = None
+    if res is None and not row.payload.get("extra_flags"):
+        await _retry(task_id, error or "Interrupted")
+        return  # без результата сохраняем исходный текст для исправления ошибки и ручного повтора
     # Явный флаг не ждёт повторов LLM: прежняя резервная реакция нужна уже при первой ошибке.
     await _apply(task_id, row.employee_id, res, error)
 

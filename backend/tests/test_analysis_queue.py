@@ -107,20 +107,38 @@ async def test_failed_apply_rolls_back_analysis_and_alert_before_retry(db, monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("flags", [None, ["намерение уйти"]])
-async def test_model_retries_do_not_delay_explicit_flags(db, monkeypatch, flags):
+@pytest.mark.parametrize("interrupted", [False, True])
+async def test_model_retries_do_not_delay_explicit_flags(db, monkeypatch, flags, interrupted):
     await enqueue(db, flags)
     analyze = AsyncMock(side_effect=RuntimeError("model unavailable"))
     monkeypatch.setattr(sentiment, "analyze_text", analyze)
-    attempts = 1 if flags else MAX_ATTEMPTS
+    if interrupted:
+        async with db.session() as s:
+            task = await s.scalar(select(AnalysisTask))
+            task.status, task.attempts = "running", MAX_ATTEMPTS
+            await s.commit()
+    attempts = 1 if flags or interrupted else MAX_ATTEMPTS
     for _ in range(attempts):
         await ready(db)
         assert await queue.process_one()
     assert not await queue.process_one()
-    assert analyze.await_count == attempts
+    assert analyze.await_count == (0 if interrupted else attempts)
     async with db.session() as s:
         assert await s.scalar(select(func.count()).select_from(Analysis)) == 0
         assert await s.scalar(select(func.count()).select_from(Ticket)) == int(bool(flags))
-        assert (await s.scalar(select(AnalysisTask))).status == "done"
+        task = await s.scalar(select(AnalysisTask))
+        assert task.status == ("done" if flags else "failed")
+        assert bool(task.payload) is (not flags)
+        if not flags:
+            task.status, task.attempts = "pending", 0
+            await s.commit()
+    if not flags:
+        await ready(db)
+        monkeypatch.setattr(sentiment, "analyze_text", AsyncMock(return_value=result()))
+        assert await queue.process_one()
+        async with db.session() as s:
+            assert await s.scalar(select(func.count()).select_from(Analysis)) == 1
+            assert (await s.scalar(select(AnalysisTask))).status == "done"
 
 
 @pytest.mark.asyncio
