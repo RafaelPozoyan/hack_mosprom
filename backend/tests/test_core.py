@@ -436,3 +436,34 @@ def test_answer_cache_skips_service_errors(monkeypatch):
     asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
     asyncio.run(rag.answer(None, "Когда зарплата?", "GTP", "ты"))
     assert inner.await_count == 2  # сбой сервиса не запоминаем: следующий раз — новая попытка
+
+
+def test_analysis_skips_deleted_employee(monkeypatch):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+
+    from app import db
+    from app.analytics import sentiment
+
+    class Empty:
+        async def get(self, model, ident):
+            return None  # новичка удалили, пока ответ ждал разбора
+
+    @asynccontextmanager
+    async def session():
+        yield Empty()
+
+    monkeypatch.setattr(db, "session", session)
+    analyze = AsyncMock()
+    save = AsyncMock()
+    monkeypatch.setattr(sentiment, "analyze_text", analyze)
+    monkeypatch.setattr(sentiment, "save_and_react", save)
+    monkeypatch.setattr(sentiment, "last_bot_text", AsyncMock(return_value=""))
+
+    async def run():
+        sentiment.analyze_later(404, "Уже устал", "chat")
+        await asyncio.sleep(0.05)
+
+    asyncio.run(run())
+    analyze.assert_not_awaited()
+    save.assert_not_awaited()
