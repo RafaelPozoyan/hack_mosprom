@@ -433,6 +433,7 @@ def test_answer_cache_reuses_same_question_until_knowledge_changes(monkeypatch):
         ("not_in_context", 2),
         ("bad_citation", 2),
         ("unsupported_number", 2),
+        ("unsupported_contact", 2),
         ("low_score", 1),
         ("no_hits", 1),
     ],
