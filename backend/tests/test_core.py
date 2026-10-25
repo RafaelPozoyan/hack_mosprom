@@ -355,6 +355,23 @@ def test_path_changing_button_fires_once(monkeypatch):
     assert reacts == [["нет доступов"]]
 
 
+def test_repeated_press_is_answered_instead_of_silence(monkeypatch):
+    from app.bot import dialog
+
+    sent = []
+
+    async def fake_send(s, emp, msg, **kw):
+        sent.append(msg.text)
+
+    monkeypatch.setattr(
+        dialog, "find_button", lambda payload, emp: {"text": "Да, расскажи", "goto": "gym_info"}
+    )
+    monkeypatch.setattr(dialog.channels, "send", fake_send)
+    e = emp(id=1, address_form="vy", state={"pressed": ["d3_gym:0"]})
+    asyncio.run(dialog.scenario_button(FakeSession(), e, "b:d3_gym:0:0:0"))
+    assert sent == ["Этот вариант уже выбран 👌 Если нужно что-то ещё — напишите своими словами."]
+
+
 def test_stale_skip_does_not_advance_survey(monkeypatch):
     from app.bot import surveys
 

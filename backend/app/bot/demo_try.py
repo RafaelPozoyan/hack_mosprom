@@ -32,6 +32,7 @@ INTRO = (
 FULL = "Демо-места закончились — спасибо за интерес к Корсику! 🐾"
 DONE = "Это был последний шаг пути новичка. Спасибо, что попробовали Корсика! 🐾"
 SURVEY_FIRST = "Сначала ответьте на вопрос опроса выше — Корсик ждёт ответа."
+REQUIRED_FIRST = "Сначала ответьте на шаг «{title}» — он обязательный, без ответа Корсик дальше не пойдёт."
 HINT_MARK = "Дальше по плану"
 STAFF_LABEL = {"to_manager": "руководителю", "to_recruiter": "рекрутеру"}
 
@@ -129,6 +130,8 @@ async def _advance(emp_id: int) -> None:
     from app.scheduler import run_job  # планировщик импортирует бота: локальный импорт без цикла
 
     try:
+        if await _required_first(emp_id):
+            return
         async with session() as s:
             job = await s.scalar(
                 select(Job)
@@ -181,10 +184,40 @@ async def hint(emp_id: int, intro: bool = False) -> None:
         lines = [f"{INTRO} {note}" if note else INTRO] if intro else []
         if emp.state.get("survey"):
             lines.append(SURVEY_FIRST)
+        elif waiting := _waiting_required(emp):
+            lines.append(REQUIRED_FIRST.format(title=_step_title(waiting["id"], emp)))
         lines.append(f"⏩ Дальше по плану: «{title}» — {plan_label(job.run_at, emp)}")
         await channels.send(
             s, emp, OutMessage(text="\n\n".join(lines), buttons=[[Button("⏩ Дальше", payload=NEXT)]])
         )
+
+
+def _step_title(step_id: str, emp: Employee) -> str:
+    return (step(step_id, emp.site_code) or {}).get("title", step_id)
+
+
+def _waiting_required(emp: Employee) -> dict | None:
+    """Обязательный шаг ждёт ответа; опрос в процессе ведёт свой счёт вопросов и сюда не относится."""
+    waiting = emp.state.get("required_step") or {}
+    return waiting if waiting.get("key") and not emp.state.get("survey") else None
+
+
+async def _required_first(emp_id: int) -> bool:
+    """«Дальше» не перепрыгивает обязательный шаг, а возвращает к нему: иначе следующий опрос молча заблокируется."""
+    async with session() as s:
+        emp = await s.get(Employee, emp_id)
+        waiting = _waiting_required(emp) if emp else None
+        if waiting is None:
+            return False
+        await channels.send(
+            s,
+            emp,
+            OutMessage(
+                text=REQUIRED_FIRST.format(title=_step_title(waiting["id"], emp)),
+                buttons=[[Button("Продолжить ➡️", payload=f"a:required:{waiting['key']}")]],
+            ),
+        )
+        return True
 
 
 async def _show_staff_notes(emp_id: int, after_id: int) -> None:

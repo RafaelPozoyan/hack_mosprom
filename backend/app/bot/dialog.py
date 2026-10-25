@@ -28,6 +28,9 @@ from app.rag.answer import answer as rag_answer
 
 log = logging.getLogger(__name__)
 
+# Кнопка уже сработала: молчание на повторное нажатие выглядит как зависший бот
+ALREADY = "Этот вариант уже выбран 👌 Если нужно что-то ещё — {напиши|напишите} своими словами."
+
 SMALLTALK = {
     "привет",
     "приветик",
@@ -245,6 +248,7 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
     required = bool(st and st.get("required"))
     if required:
         if progress.required_step(emp) != step_id:
+            await channels.send(s, emp, OutMessage(text=render(ALREADY, emp)))
             return
         value = {"label": btn["text"]}
         if btn.get("flag"):
@@ -264,6 +268,7 @@ async def scenario_button(s: AsyncSession, emp: Employee, payload: str) -> None:
         # такие кнопки меняют путь новичка: двойной тап или нажатие в старом сообщении не должны срабатывать повторно
         pressed = emp.state.get("pressed", [])
         if f"{step_id}:{idx}" in pressed:
+            await channels.send(s, emp, OutMessage(text=render(ALREADY, emp)))
             return
         emp.state = {**emp.state, "pressed": [*pressed, f"{step_id}:{idx}"]}
         await s.commit()
