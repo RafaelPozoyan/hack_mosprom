@@ -177,7 +177,8 @@ async def hint(emp_id: int, intro: bool = False) -> None:
             if job.kind == "step"
             else "Напоминание об опросе"
         )
-        lines = [INTRO] if intro else []
+        note = settings().demo_try_note
+        lines = [f"{INTRO} {note}" if note else INTRO] if intro else []
         if emp.state.get("survey"):
             lines.append(SURVEY_FIRST)
         lines.append(f"⏩ Дальше по плану: «{title}» — {plan_label(job.run_at, emp)}")
