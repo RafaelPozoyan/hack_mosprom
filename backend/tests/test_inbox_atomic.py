@@ -16,10 +16,25 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app import channels, scheduler
+from app.analytics import analysis_queue
 from app.api import admin
 from app.bot import dialog, escalation, inbox, surveys, updates
 from app.db import Base
-from app.models import Employee, Job, MaxDelivery, MaxUpdate, Message, Site, Staff, SurveyAnswer, Ticket
+from app.models import (
+    Analysis,
+    AnalysisTask,
+    Employee,
+    Job,
+    MaxDelivery,
+    MaxUpdate,
+    Message,
+    Question,
+    Site,
+    Staff,
+    SurveyAnswer,
+    Ticket,
+    TicketDeadline,
+)
 
 
 @pytest_asyncio.fixture
@@ -50,6 +65,10 @@ async def db(monkeypatch):
                             SurveyAnswer,
                             MaxDelivery,
                             MaxUpdate,
+                            Analysis,
+                            AnalysisTask,
+                            Question,
+                            TicketDeadline,
                         )
                     ],
                 )
@@ -61,6 +80,7 @@ async def db(monkeypatch):
                 yield s
 
         monkeypatch.setattr(inbox, "session", session)
+        monkeypatch.setattr(analysis_queue, "session", session)
         monkeypatch.setattr(updates, "session", session)
         monkeypatch.setattr(updates, "_locks", defaultdict(asyncio.Lock))
         monkeypatch.setattr(updates.demo_try, "schedule_after_event", Mock())

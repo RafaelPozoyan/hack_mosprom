@@ -193,6 +193,26 @@ class Analysis(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class AnalysisTask(Base):
+    """Сохраняемый разбор ответа: результат и реакция фиксируются вместе с завершением задачи."""
+
+    __tablename__ = "analysis_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    employee_id: Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    source: Mapped[str] = mapped_column(String(20))
+    source_id: Mapped[int] = mapped_column(Integer)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(12), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(String(200))
+
+    __table_args__ = (
+        Index("ix_analysis_source", "source", "source_id", unique=True),
+        Index("ix_analysis_due", "status", "available_at"),
+    )
+
+
 class Ticket(Base):
     """Эскалация на живого HR: вопрос без ответа в базе, проблема из опроса или красный флаг."""
 
