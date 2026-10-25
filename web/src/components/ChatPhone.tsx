@@ -5,7 +5,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { api, fmtTime, type ChatMessage, type Employee, type UpNext } from '../api'
 import { KorsikMark } from './ui'
 
-const URL_RE = /(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s)]+|\*\*[^*]+\*\*)/g
+const URL_RE = /(\[[^\]]+\]\([^)]+\)|https?:\/\/[^\s)<>"']+|\*\*[^*]+\*\*)/g
 
 function RichText({ text }: { text: string }) {
   const parts = text.split(URL_RE)
