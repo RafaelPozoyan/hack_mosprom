@@ -4,8 +4,6 @@
 тональности он объясняет, *что* именно не так («проблемы с доступами»), и это сразу можно передать HR.
 """
 
-import asyncio
-import logging
 from typing import Literal
 
 from pydantic import BaseModel
@@ -14,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import channels, llm
 from app.channels import Button, OutMessage
 from app.models import Analysis, Employee, Message
-
-log = logging.getLogger(__name__)
 
 
 def taxonomy() -> dict:
@@ -149,38 +145,3 @@ async def react(
             f"Сигнал по адаптации: {', '.join(manager_flags)}. Рекомендуем провести личную встречу 1:1 с {emp.full_name} в ближайшие дни.",
             None,
         )
-
-
-def analyze_later(
-    emp_id: int, text: str, source: str, extra_flags: list[str] | None = None, question_id: int | None = None
-) -> None:
-    """Анализ в фоне: сотрудник не ждёт LLM, следующий вопрос опроса или ответ приходит сразу.
-    Сам разбор LLM идёт без замка сотрудника: на CPU это десятки секунд, и кнопки сотрудника всё это время ждали бы.
-    Запись и реакция — под замком, чтобы не гоняться с обработкой его сообщений за состояние диалога."""
-
-    async def job():
-        from app.bot.updates import _locks
-        from app.db import session
-        from app.models import Question
-
-        async with session() as s:
-            emp = await s.get(Employee, emp_id)
-            if emp is None:  # новичка удалили, пока ответ ждал разбора
-                return
-            context = await last_bot_text(s, emp)
-        try:
-            res = await analyze_text(text, context=context)
-        except Exception:
-            log.exception("sentiment analysis failed")
-            res = None
-        async with _locks[emp_id], session() as s:
-            emp = await s.get(Employee, emp_id)
-            if emp is None:  # удалили за время разбора
-                return
-            a = await save_and_react(s, emp, res, text, source, extra_flags)
-            if a and question_id:
-                q = await s.get(Question, question_id)
-                q.topic = a.topics[0]
-                await s.commit()
-
-    asyncio.create_task(job())

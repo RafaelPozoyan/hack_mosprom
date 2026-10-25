@@ -9,11 +9,11 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import channels
-from app.analytics.sentiment import analyze_later, react
+from app.analytics.analysis_queue import enqueue as queue_analysis
+from app.analytics.sentiment import react
 from app.bot import progress
 from app.bot.scenario import render, run_step, scenario, step
 from app.channels import Button, OutMessage
-from app.db import after_commit
 from app.models import Employee, Job, Message, SurveyAnswer
 
 COMMENT_PROMPT = "Пожалуйста, {укажи|укажите} причину — это поможет нам сделать адаптацию лучше 🙏"
@@ -233,32 +233,28 @@ async def comment(s: AsyncSession, emp: Employee, text: str | None) -> None:
     if aw.get("kind") not in ("survey_comment", "survey_text"):
         return  # «Пропустить» из старого сообщения: комментарий уже не ждём, иначе опрос перескочил бы вопрос
     emp.state = {k: v for k, v in emp.state.items() if k != "await"}
-    await s.commit()
+    ans = None
     if aw.get("kind") == "survey_text":
         st = emp.state["survey"]
         q = questions(emp, st["id"])[st["q"]]
-        s.add(
-            SurveyAnswer(
-                employee_id=emp.id,
-                survey_id=st["id"],
-                question_id=q["id"],
-                value={"text": text},
-                comment=text,
-            )
+        ans = SurveyAnswer(
+            employee_id=emp.id,
+            survey_id=st["id"],
+            question_id=q["id"],
+            value={"text": text},
+            comment=text,
         )
-        await s.commit()
-    elif aw.get("answer_id") and text:
+        s.add(ans)
+        await s.flush()
+    elif aw.get("answer_id"):
         ans = await s.get(SurveyAnswer, aw["answer_id"])
-        if ans:
+        if ans and text:
             ans.comment = text
-            await s.commit()
-    flag = None
-    if aw.get("answer_id"):
-        ans = await s.get(SurveyAnswer, aw["answer_id"])
-        flag = ans.value.get("flag") if ans else None
-    if text:
-        after_commit(s, analyze_later, emp.id, text, "survey", [flag] if flag else None)
-    elif flag:
+    flag = ans.value.get("flag") if ans else None
+    if text and ans:
+        await queue_analysis(s, emp, text, "survey", ans.id, [flag] if flag else None)
+    await s.commit()
+    if not text and flag:
         await react(s, emp, [flag], "medium", f"Ответ в опросе: {flag}")
     if aw.get("offer") and text:
         await channels.send(

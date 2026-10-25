@@ -22,6 +22,7 @@ from app.bot import dialog, escalation, followup, progress, scenario, surveys
 from app.db import Base
 from app.models import (
     Analysis,
+    AnalysisTask,
     Employee,
     Job,
     Message,
@@ -61,6 +62,7 @@ async def db(monkeypatch):
                         Message.__table__,
                         SurveyAnswer.__table__,
                         Analysis.__table__,
+                        AnalysisTask.__table__,
                     ],
                 )
             )
@@ -654,7 +656,7 @@ async def test_old_survey_buttons_cannot_change_restarted_same_survey(db):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("form", ["ty", "vy"])
 async def test_text_needs_confirmation_and_survives_new_session(db, monkeypatch, form):
-    monkeypatch.setattr(surveys, "analyze_later", lambda *args, **kwargs: None)
+    monkeypatch.setattr(surveys, "queue_analysis", AsyncMock())
     async with db.session() as s:
         emp = await s.get(Employee, 1)
         emp.address_form = form
@@ -676,7 +678,7 @@ async def test_text_needs_confirmation_and_survives_new_session(db, monkeypatch,
 
 @pytest.mark.asyncio
 async def test_replaced_text_and_old_confirmation_cannot_change_current_answer(db, monkeypatch):
-    monkeypatch.setattr(surveys, "analyze_later", lambda *args, **kwargs: None)
+    monkeypatch.setattr(surveys, "queue_analysis", AsyncMock())
     async with db.session() as s:
         emp = await s.get(Employee, 1)
         await scenario.run_step(s, emp, "w2_check")
@@ -718,7 +720,7 @@ async def test_separate_question_does_not_become_survey_answer(db, monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("skip_answer", [False, True])
 async def test_open_text_answer_is_confirmed_or_explicitly_skipped(db, monkeypatch, skip_answer):
-    monkeypatch.setattr(surveys, "analyze_later", lambda *args, **kwargs: None)
+    monkeypatch.setattr(surveys, "queue_analysis", AsyncMock())
     async with db.session() as s:
         emp = await s.get(Employee, 1)
         definition = scenario.scenario()["surveys"]["final"]
