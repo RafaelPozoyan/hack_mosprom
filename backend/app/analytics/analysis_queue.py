@@ -102,13 +102,13 @@ async def _process(task_id: int) -> None:
         try:
             res = await sentiment.analyze_text(row.payload["text"], context=row.payload["context"])
         except Exception as exc:
-            if row.attempts < MAX_ATTEMPTS:
+            if row.attempts < MAX_ATTEMPTS and not row.payload.get("extra_flags"):
                 await _retry(task_id, exc)
                 return
             error = type(exc).__name__
         else:
             error = None
-    # После последней ошибки модели сохраняем прежнюю реакцию на явные флаги, даже без NLP.
+    # Явный флаг не ждёт повторов LLM: прежняя резервная реакция нужна уже при первой ошибке.
     await _apply(task_id, row.employee_id, res, error)
 
 

@@ -106,18 +106,20 @@ async def test_failed_apply_rolls_back_analysis_and_alert_before_retry(db, monke
 
 
 @pytest.mark.asyncio
-async def test_exhausted_model_retries_still_apply_explicit_flags_once(db, monkeypatch):
-    await enqueue(db, ["намерение уйти"])
+@pytest.mark.parametrize("flags", [None, ["намерение уйти"]])
+async def test_model_retries_do_not_delay_explicit_flags(db, monkeypatch, flags):
+    await enqueue(db, flags)
     analyze = AsyncMock(side_effect=RuntimeError("model unavailable"))
     monkeypatch.setattr(sentiment, "analyze_text", analyze)
-    for _ in range(MAX_ATTEMPTS):
+    attempts = 1 if flags else MAX_ATTEMPTS
+    for _ in range(attempts):
         await ready(db)
         assert await queue.process_one()
     assert not await queue.process_one()
-    assert analyze.await_count == MAX_ATTEMPTS
+    assert analyze.await_count == attempts
     async with db.session() as s:
         assert await s.scalar(select(func.count()).select_from(Analysis)) == 0
-        assert await s.scalar(select(func.count()).select_from(Ticket)) == 1
+        assert await s.scalar(select(func.count()).select_from(Ticket)) == int(bool(flags))
         assert (await s.scalar(select(AnalysisTask))).status == "done"
 
 
