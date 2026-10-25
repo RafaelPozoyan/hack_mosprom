@@ -11,8 +11,9 @@ import pytest
 from fastapi import FastAPI
 
 from app.api import admin
-from app.bot import dialog, escalation, updates
+from app.bot import dialog, escalation, surveys, updates
 from app.db import get_session
+from app.models import Question
 
 
 class FakeSession:
@@ -170,21 +171,62 @@ def test_open_dialog_does_not_duplicate_ticket(case, monkeypatch, subject, forwa
     assert case.send.await_args.kwargs["ticket_id"] == 7
 
 
-@pytest.mark.parametrize(
-    ("problem", "subject"),
-    [
-        ("Есть ли парковка у офиса?", "Есть ли парковка у офиса?"),
-        (None, "Сотрудник просит связаться с рекрутером"),
-    ],
-)
-def test_recruiter_button_carries_unanswered_question(case, monkeypatch, problem, subject):
-    if problem:
-        case.emp.state["last_problem"] = problem
-    open_dialog = AsyncMock()
-    monkeypatch.setattr(escalation, "open_dialog", open_dialog)
-    for _ in range(2):  # повторное нажатие — та же тема, open_dialog ответит «Уже передал»
-        asyncio.run(dialog.action(case.session, case.emp, "recruiter"))
-    assert [c.args[2] for c in open_dialog.await_args_list] == [subject, subject]
+class Store(FakeSession):
+    """Обращения и вопросы по id: open_dialog и close работают по-настоящему."""
+
+    def __init__(self, questions):
+        super().__init__(None)
+        self.tickets, self.questions = {}, {q.id: q for q in questions}
+
+    async def get(self, model, ident):
+        return (self.questions if model is Question else self.tickets).get(int(ident))
+
+
+@pytest.fixture
+def store(case, monkeypatch):
+    s = Store(
+        [
+            SimpleNamespace(id=5, employee_id=1, text="Есть ли парковка у офиса?"),
+            SimpleNamespace(id=6, employee_id=2, text="Вопрос другого новичка"),
+        ]
+    )
+
+    async def create_ticket(_s, emp, kind, subject, severity="medium"):
+        t = SimpleNamespace(
+            id=len(s.tickets) + 1, employee=emp, kind=kind, subject=subject, status="open", closed_at=None
+        )
+        s.tickets[t.id] = t
+        return t
+
+    monkeypatch.setattr(escalation, "create_ticket", create_ticket)
+    return s
+
+
+def test_refusal_buttons_share_one_ticket_for_the_question(case, store):
+    for act in ("recruiter:5", "relay_q:5", "recruiter:5"):  # обе кнопки под отказом, в любом порядке
+        asyncio.run(dialog.action(store, case.emp, act))
+    assert [t.subject for t in store.tickets.values()] == ["Вопрос сотрудника: Есть ли парковка у офиса?"]
+    case.post.assert_not_awaited()  # повторы — «Уже передал», без пересылки HR
+
+
+def test_survey_recruiter_after_closed_ticket_does_not_reuse_old_question(case, store):
+    asyncio.run(dialog.action(store, case.emp, "recruiter:5"))
+    asyncio.run(escalation.close(store, store.tickets[1]))
+    asyncio.run(dialog.action(store, case.emp, "recruiter"))  # кнопка из опроса — без вопроса
+    assert [t.subject for t in store.tickets.values()] == [
+        "Вопрос сотрудника: Есть ли парковка у офиса?",
+        "Сотрудник просит связаться с рекрутером",
+    ]
+
+
+def test_recruiter_button_ignores_foreign_question(case, store):
+    asyncio.run(dialog.action(store, case.emp, "recruiter:6"))
+    assert store.tickets[1].subject == "Сотрудник просит связаться с рекрутером"
+
+
+def test_refusal_offer_binds_both_buttons_to_question():
+    rows = surveys.offer_buttons(SimpleNamespace(recruiter=None), ["relay", "recruiter"], question_id=5)
+    assert [b.payload for row in rows for b in row] == ["a:relay_q:5", "a:recruiter:5"]
 
 
 def test_open_dialog_after_closed_ticket_creates_new(case, monkeypatch):
