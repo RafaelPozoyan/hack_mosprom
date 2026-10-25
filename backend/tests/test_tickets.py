@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 
 from app.api import admin
-from app.bot import escalation, updates
+from app.bot import dialog, escalation, updates
 from app.db import get_session
 
 
@@ -168,6 +168,23 @@ def test_open_dialog_does_not_duplicate_ticket(case, monkeypatch, subject, forwa
     assert case.post.await_count == int(forwarded)  # новый вопрос — в тот же диалог HR
     case.send.assert_awaited_once()
     assert case.send.await_args.kwargs["ticket_id"] == 7
+
+
+@pytest.mark.parametrize(
+    ("problem", "subject"),
+    [
+        ("Есть ли парковка у офиса?", "Просит связаться с рекрутером: Есть ли парковка у офиса?"),
+        (None, "Сотрудник просит связаться с рекрутером"),
+    ],
+)
+def test_recruiter_button_carries_unanswered_question(case, monkeypatch, problem, subject):
+    if problem:
+        case.emp.state["last_problem"] = problem
+    open_dialog = AsyncMock()
+    monkeypatch.setattr(escalation, "open_dialog", open_dialog)
+    for _ in range(2):  # повторное нажатие — та же тема, open_dialog ответит «Уже передал»
+        asyncio.run(dialog.action(case.session, case.emp, "recruiter"))
+    assert [c.args[2] for c in open_dialog.await_args_list] == [subject, subject]
 
 
 def test_open_dialog_after_closed_ticket_creates_new(case, monkeypatch):

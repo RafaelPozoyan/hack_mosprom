@@ -305,7 +305,15 @@ async def action(s: AsyncSession, emp: Employee, act: str) -> None:
             s, emp, f"Вопрос сотрудника: {q.text}" if q else "Вопрос сотрудника", kind="question"
         )
     elif name == "recruiter":
-        await escalation.open_dialog(s, emp, "Сотрудник просит связаться с рекрутером", kind="problem")
+        # Вопрос, на который Корсик не ответил, — в теме: без него HR и карточка не знают, о чём речь.
+        # last_problem не сбрасываем: повторное нажатие даст ту же тему и не создаст второе обращение.
+        problem = emp.state.get("last_problem")
+        subject = (
+            f"Просит связаться с рекрутером: {problem}"
+            if problem
+            else "Сотрудник просит связаться с рекрутером"
+        )
+        await escalation.open_dialog(s, emp, subject, kind="problem")
     elif name == "recruiter_voice":
         problem = emp.state.get("last_problem") or ""
         await escalation.create_ticket(
