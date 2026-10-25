@@ -5,8 +5,15 @@ cd "$(dirname "$0")"
 
 # Tesseract: русская модель tessdata_best — для OCR сканов (ПВТР — скан без текстового слоя)
 mkdir -p ocr
-[ -f ocr/rus.traineddata ] || curl -fL -o ocr/rus.traineddata \
-  https://github.com/tesseract-ocr/tessdata_best/raw/main/rus.traineddata
+if [ ! -f ocr/rus.traineddata ]; then
+  ocr_tmp=$(mktemp ocr/rus.traineddata.XXXXXX)
+  trap 'rm -f "$ocr_tmp"' EXIT
+  curl -fL -o "$ocr_tmp" \
+    https://github.com/tesseract-ocr/tessdata_best/raw/main/rus.traineddata
+  chmod 644 "$ocr_tmp" # Модель должна быть доступна для чтения внутри контейнера Docling.
+  mv "$ocr_tmp" ocr/rus.traineddata
+  trap - EXIT
+fi
 
 # GigaChat 3.1 Lightning, квантизация Q4_K_M (6.5 ГБ) — локальная LLM
 MODELS_DIR="${MODELS_DIR:-$HOME/.cache/polyplastic-models/gigachat31}"
