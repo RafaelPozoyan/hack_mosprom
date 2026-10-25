@@ -1,5 +1,6 @@
 """Доступ по личной ссылке руководителя: изоляция сотрудников и приватность ответов."""
 
+import asyncio
 import os
 from datetime import date
 from types import SimpleNamespace
@@ -200,7 +201,8 @@ async def test_hr_data_and_feed_reject_anonymous_or_manager_credentials(db, mode
         "/api/feed",
         "/api/demo/employees/1/stream",
     ):
-        result = await db.get(path, headers=headers, params=params)
+        # Если авторизация пропустит SSE, тест должен упасть, а не ждать бесконечный поток.
+        result = await asyncio.wait_for(db.get(path, headers=headers, params=params), timeout=5)
         assert result.status_code == 401, (path, result.status_code)
         assert PRIVATE not in result.text
         assert SECRET not in result.text
