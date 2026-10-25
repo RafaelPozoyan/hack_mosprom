@@ -217,3 +217,61 @@ async def test_parallel_workers_do_not_send_one_notification_twice(db):
         release.set()
         await worker
     db.client.send.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", [Ticket, Employee])
+async def test_delete_during_send_removes_notification_without_retry(db, model):
+    ident = await queue(db, chat_id=99, ticket_id=1, kind="hr_card")
+
+    async def send(*args, **kwargs):
+        async with db.session() as s:
+            await s.delete(await s.get(model, 1))
+            await asyncio.wait_for(s.commit(), timeout=2)
+        return "confirmed-mid"
+
+    db.client.send.side_effect = send
+    assert await notifications.process_one()
+    async with db.session() as s:
+        assert await s.get(MaxNotification, ident) is None
+    assert not await notifications.process_one()
+
+
+@pytest.mark.asyncio
+async def test_opposite_recipient_orders_do_not_deadlock(db):
+    pid = asyncio.get_running_loop().create_future()
+
+    async def other():
+        async with db.session() as s:
+            pid.set_result(await s.scalar(select(func.pg_backend_pid())))
+            await notifications.enqueue(s, OutMessage(text="B"), user_id=2)
+            await notifications.enqueue(s, OutMessage(text="B"), user_id=1)
+            await s.commit()
+
+    async def wait_for_lock():
+        other_pid = await pid
+        async with db.session() as observer:
+            while True:
+                await observer.execute(select(func.pg_stat_clear_snapshot()))
+                if await observer.scalar(
+                    text("SELECT wait_event_type = 'Lock' FROM pg_stat_activity WHERE pid = :pid"),
+                    {"pid": other_pid},
+                ):
+                    return
+
+    task = None
+    try:
+        async with db.session() as s:
+            await notifications.enqueue(s, OutMessage(text="A"), user_id=1)
+            task = asyncio.create_task(other())
+            await asyncio.wait_for(wait_for_lock(), timeout=5)
+            await asyncio.wait_for(notifications.enqueue(s, OutMessage(text="A"), user_id=2), timeout=2)
+            await s.commit()
+        await asyncio.wait_for(task, timeout=2)
+    finally:
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    async with db.session() as s:
+        rows = list(await s.scalars(select(MaxNotification).order_by(MaxNotification.id)))
+        assert [(r.payload["text"], r.user_id) for r in rows] == [("A", 1), ("A", 2), ("B", 2), ("B", 1)]

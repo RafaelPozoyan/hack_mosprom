@@ -69,8 +69,9 @@ async def lifespan(app: FastAPI):
         log.info("MAX: long polling (dev)")
     else:
         log.info("MAX_TOKEN не задан — работает демо-канал в веб-панели")
-    tasks = [asyncio.create_task(scheduler.loop()), asyncio.create_task(notifications.loop())]
+    tasks = [asyncio.create_task(scheduler.loop())]
     tasks.append(asyncio.create_task(analysis_queue.loop()))
+    tasks.extend(asyncio.create_task(notifications.loop()) for _ in range(notifications.WORKERS))
     tasks.extend(asyncio.create_task(outbox.loop()) for _ in range(outbox.WORKERS))
     if client:
         tasks.extend(asyncio.create_task(inbox.loop()) for _ in range(inbox.WORKERS))
